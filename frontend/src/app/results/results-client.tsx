@@ -68,6 +68,7 @@ export default function ResultsClient() {
 
   const jobId = urlState.job_id
   const batchId = urlState.batch_id
+  const currentId = batchId ?? jobId
 
   const { files, packageName, setUpload } = useUploadStore()
   const lastLoadedFiles = useRef<File[] | null>(null)
@@ -309,7 +310,6 @@ export default function ResultsClient() {
   }, [clearSelection])
 
   const prevIdRef = useRef<string | null | undefined>(undefined)
-  const currentId = batchId ?? jobId
   useEffect(() => {
     if (prevIdRef.current !== undefined && prevIdRef.current !== currentId) {
       setUrlState({ file: null, vuln: null, line: null })

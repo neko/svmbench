@@ -32,7 +32,15 @@ export function RunStatusPanel({
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="flex flex-1 flex-col items-center justify-center p-8">
+      <div className="flex flex-1 items-center justify-center gap-8 p-8">
+        <video
+          src="/drum.webm"
+          autoPlay
+          loop
+          muted
+          playsInline
+          className="hidden h-48 w-48 object-contain sm:block"
+        />
         <div className="w-full max-w-md space-y-3">
           <div className="space-y-1">
             <h3 className="text-base text-foreground">Running analysis</h3>

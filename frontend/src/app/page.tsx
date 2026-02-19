@@ -265,8 +265,8 @@ export default function Page() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="low">Low (~2 min)</SelectItem>
-                      <SelectItem value="medium">Medium (~10 min)</SelectItem>
-                      <SelectItem value="high">High (thorough)</SelectItem>
+                      <SelectItem value="medium">Medium (~6 min)</SelectItem>
+                      <SelectItem value="high">High (~12 min)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

@@ -44,13 +44,40 @@ if [[ ! -f "${AUTH_PATH}" ]]; then
   printf '%s\n' "${OPENAI_API_KEY}" | codex login --with-api-key > "${LOGS_DIR}/codex_login.log" 2>&1 || true
 fi
 
-timeout --signal=KILL "${TIMEOUT_SECONDS}s" codex exec \
+# calculate when to write the finish signal (30s before hard timeout, min 10s)
+GRACE_SECONDS=30
+if [[ "${TIMEOUT_SECONDS}" -le 60 ]]; then
+  GRACE_SECONDS=10
+fi
+WARN_SECONDS=$((TIMEOUT_SECONDS - GRACE_SECONDS))
+if [[ "${WARN_SECONDS}" -lt 10 ]]; then
+  WARN_SECONDS=10
+fi
+
+# background process to write finish-up signal near timeout
+(
+  sleep "${WARN_SECONDS}"
+  cat > "${AGENT_DIR}/FINISH_NOW.md" <<'FINISH_EOF'
+# URGENT: TIME IS ALMOST UP
+
+you are about to run out of time. immediately stop any further investigation.
+
+write your current findings to `submission/audit.md` NOW. even if incomplete, submit what you have found so far. do not start any new analysis - just finalize and write the report.
+FINISH_EOF
+) &
+WARN_PID=$!
+
+# run codex with SIGTERM first (graceful), then SIGKILL after grace period
+timeout --signal=TERM --kill-after="${GRACE_SECONDS}s" "${TIMEOUT_SECONDS}s" codex exec \
   --model "${CODEX_MODEL}" \
   --dangerously-bypass-approvals-and-sandbox \
   --skip-git-repo-check \
   --experimental-json \
   "${LAUNCHER_PROMPT}" \
-  > "${LOGS_DIR}/agent.log" 2>&1
+  > "${LOGS_DIR}/agent.log" 2>&1 || true
+
+# cleanup background process
+kill "${WARN_PID}" 2>/dev/null || true
 
 if [[ ! -s "${SUBMISSION_DIR}/audit.md" ]]; then
   echo "missing expected output: ${SUBMISSION_DIR}/audit.md" >&2

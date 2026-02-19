@@ -41,21 +41,9 @@ MODEL_MAP_PATH = RUNNER_DIR / 'model_map.json'
 CODEX_RUNNER_SH = RUNNER_DIR / 'run_codex_detect.sh'
 
 EFFORT_TIMEOUTS: dict[str, int] = {
-    'low': 120,
-    'medium': 600,
-    'high': 10800,
-}
-
-EFFORT_PROMPTS: dict[str, str] = {
-    'low': (
-        'EFFORT LEVEL: LOW. be concise. focus only on the most obvious and critical vulnerabilities. '
-        'do not explore deeply or trace every code path. prioritize speed over completeness.\n\n'
-    ),
-    'medium': (
-        'EFFORT LEVEL: MEDIUM. balance thoroughness with efficiency. investigate promising leads '
-        'but do not exhaustively trace every path. aim for a solid report without excessive runtime.\n\n'
-    ),
-    'high': '',
+    'low': 120,      # 2 minutes
+    'medium': 360,   # 6 minutes
+    'high': 720,     # 12 minutes
 }
 
 
@@ -255,15 +243,8 @@ def _run_codex_detect(*, openai_token: str, key_mode: str, provider: str = 'open
     env['SVM_BENCH_CODEX_TIMEOUT_SECONDS'] = str(timeout_seconds)
     logger.info(f'Effort={effort}, timeout={timeout_seconds}s')
 
-    # Prepend effort instructions to detect.md if needed.
-    effort_prefix = EFFORT_PROMPTS.get(effort, '')
-    if effort_prefix:
-        original = DETECT_MD_PATH.read_text(encoding='utf-8')
-        patched_md = AGENT_DIR / 'detect_patched.md'
-        patched_md.write_text(effort_prefix + original, encoding='utf-8')
-        env['SVM_BENCH_DETECT_MD'] = str(patched_md)
-    else:
-        env['SVM_BENCH_DETECT_MD'] = str(DETECT_MD_PATH)
+    # Use the standard detect.md for all effort levels (full autonomy).
+    env['SVM_BENCH_DETECT_MD'] = str(DETECT_MD_PATH)
 
     model_map = _load_model_map()
     model = _resolve_codex_model(model_key=MODEL_KEY, model_map=model_map)

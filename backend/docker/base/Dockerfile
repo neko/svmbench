@@ -57,30 +57,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends ripgrep && rm -
 
 WORKDIR "$AGENT_DIR"
 
-# install rust and cargo
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-ENV PATH="/home/agent/.cargo/bin:$PATH"
-
-# install solana cli tools
-ARG TARGETARCH
-RUN set -eux; \
-    arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \
-    if [ "$arch" = "arm64" ]; then \
-      curl -L -o /tmp/solana.tar.gz "https://github.com/aarush67/solana-linux-arrch64-compiled-Binary/releases/download/v2.0.0/solana-2.0.0-aarch64.tar.gz"; \
-      mkdir -p /home/agent/.local/share/solana/install/active_release; \
-      tar -xzf /tmp/solana.tar.gz -C /home/agent/.local/share/solana/install/active_release --strip-components=1; \
-      rm /tmp/solana.tar.gz; \
-    else \
-      sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"; \
-    fi
-ENV PATH="/home/agent/.local/share/solana/install/active_release/bin:$PATH"
-
-# install anchor cli (skipped on arm64 - no prebuilt binary available)
-# TODO: add arm64 anchor support
-# RUN cargo install --git https://github.com/coral-xyz/anchor avm --force && \
-#     avm install latest && \
-#     avm use latest
-
 # set the git config up
 RUN git config --global --add safe.directory $AGENT_DIR && \
     git config --global --add safe.directory $AUDIT_DIR && \

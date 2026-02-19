@@ -52,6 +52,9 @@ class StartJobForm(BaseModel):
     def parse_models(cls, value: str | list[str]) -> list[str]:
         if isinstance(value, str):
             return [m.strip() for m in value.split(',') if m.strip()]
+        # Handle list with single comma-separated string (from form data)
+        if isinstance(value, list) and len(value) == 1 and isinstance(value[0], str) and ',' in value[0]:
+            return [m.strip() for m in value[0].split(',') if m.strip()]
         return [m.strip() for m in value if m.strip()]
 
     @model_validator(mode='after')

@@ -50,6 +50,7 @@ export default function Page() {
   const [apiKey, setApiKey] = useSessionStorage("svmbench.apiKey", "")
   const [provider, setProvider] = useState<"openai" | "openrouter">("openai")
   const [model, setModel] = useState("codex-gpt-5.2")
+  const [effort, setEffort] = useState<"low" | "medium" | "high">("medium")
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [recentJobs, setRecentJobs] = useLocalStorage<RecentJob[]>(
@@ -116,7 +117,7 @@ export default function Page() {
     try {
       const name = selectedLabel ?? "files"
       const zipFile = await createZipFromFiles(files, name)
-      const response = await startJob(zipFile, model, trimmedKey, provider)
+      const response = await startJob(zipFile, model, trimmedKey, provider, effort)
       const next = addRecentJob({
         job_id: response.job_id,
         label: name,
@@ -248,6 +249,24 @@ export default function Page() {
                           {m.label}
                         </SelectItem>
                       ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-1">
+                  <Label
+                    htmlFor="effort-select"
+                    className="text-xs text-foreground"
+                  >
+                    Effort
+                  </Label>
+                  <Select value={effort} onValueChange={(v: "low" | "medium" | "high") => setEffort(v)}>
+                    <SelectTrigger id="effort-select" className="w-full">
+                      <SelectValue placeholder="Select effort" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="low">Low (~2 min)</SelectItem>
+                      <SelectItem value="medium">Medium (~10 min)</SelectItem>
+                      <SelectItem value="high">High (thorough)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

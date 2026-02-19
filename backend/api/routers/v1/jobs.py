@@ -74,9 +74,17 @@ def _require_allowed_model(model: str, provider: str) -> None:
         raise HTTPException(status_code=401, detail='Model is not allowed')
 
 
+ALLOWED_EFFORTS = {'low', 'medium', 'high'}
+
+
 def _require_allowed_provider(provider: str) -> None:
     if provider not in ALLOWED_PROVIDERS:
         raise HTTPException(status_code=401, detail='Provider is not allowed')
+
+
+def _require_allowed_effort(effort: str) -> None:
+    if effort not in ALLOWED_EFFORTS:
+        raise HTTPException(status_code=412, detail='Effort must be low, medium, or high')
 
 
 def _resolve_openai_key(form: StartJobForm) -> str | None:
@@ -146,6 +154,7 @@ async def start_job(
     await _require_no_active_job(session=session, user_id=token.user_id)
     _require_allowed_provider(form.provider)
     _require_allowed_model(form.model, form.provider)
+    _require_allowed_effort(form.effort)
 
     use_proxy_static = settings.BACKEND_USE_PROXY_STATIC_KEY
     # Force proxy mode for OpenRouter (we need to route to different base URL)
@@ -168,7 +177,7 @@ async def start_job(
     )
 
     try:
-        bundle = build_secret_bundle(upload=form.file, openai_token=openai_token, key_mode=key_mode, provider=form.provider)
+        bundle = build_secret_bundle(upload=form.file, openai_token=openai_token, key_mode=key_mode, provider=form.provider, effort=form.effort)
         await secret_storage.save_secret(secret_ref, bundle)
 
         job = Job(
@@ -178,6 +187,7 @@ async def start_job(
             secret_ref=secret_ref,
             result_token=result_token,
             model=form.model,
+            effort=form.effort,
             file_name=(form.file.filename or 'files.zip')[:128],
         )
         session.add(job)

@@ -40,6 +40,24 @@ DETECT_MD_PATH = RUNNER_DIR / 'detect.md'
 MODEL_MAP_PATH = RUNNER_DIR / 'model_map.json'
 CODEX_RUNNER_SH = RUNNER_DIR / 'run_codex_detect.sh'
 
+EFFORT_TIMEOUTS: dict[str, int] = {
+    'low': 120,
+    'medium': 600,
+    'high': 10800,
+}
+
+EFFORT_PROMPTS: dict[str, str] = {
+    'low': (
+        'EFFORT LEVEL: LOW. be concise. focus only on the most obvious and critical vulnerabilities. '
+        'do not explore deeply or trace every code path. prioritize speed over completeness.\n\n'
+    ),
+    'medium': (
+        'EFFORT LEVEL: MEDIUM. balance thoroughness with efficiency. investigate promising leads '
+        'but do not exhaustively trace every path. aim for a solid report without excessive runtime.\n\n'
+    ),
+    'high': '',
+}
+
 
 def _write_codex_proxy_config(*, home: Path, provider: str = 'openai') -> None:
     """Configure Codex to call our local proxy provider.
@@ -211,7 +229,7 @@ def _extract_json_payload(audit_md: str) -> dict:
     return _validate_report_payload(payload)
 
 
-def _run_codex_detect(*, openai_token: str, key_mode: str, provider: str = 'openai') -> Path:
+def _run_codex_detect(*, openai_token: str, key_mode: str, provider: str = 'openai', effort: str = 'medium') -> Path:
     env = os.environ.copy()
     env['OPENAI_API_KEY'] = openai_token
     # Codex CLI supports using CODEX_API_KEY; keep it aligned to avoid surprises.
@@ -232,10 +250,24 @@ def _run_codex_detect(*, openai_token: str, key_mode: str, provider: str = 'open
         msg = f'Missing Codex runner: {CODEX_RUNNER_SH}'
         raise RuntimeError(msg)
 
+    # Apply effort-based timeout.
+    timeout_seconds = EFFORT_TIMEOUTS.get(effort, EFFORT_TIMEOUTS['medium'])
+    env['SVM_BENCH_CODEX_TIMEOUT_SECONDS'] = str(timeout_seconds)
+    logger.info(f'Effort={effort}, timeout={timeout_seconds}s')
+
+    # Prepend effort instructions to detect.md if needed.
+    effort_prefix = EFFORT_PROMPTS.get(effort, '')
+    if effort_prefix:
+        original = DETECT_MD_PATH.read_text(encoding='utf-8')
+        patched_md = AGENT_DIR / 'detect_patched.md'
+        patched_md.write_text(effort_prefix + original, encoding='utf-8')
+        env['SVM_BENCH_DETECT_MD'] = str(patched_md)
+    else:
+        env['SVM_BENCH_DETECT_MD'] = str(DETECT_MD_PATH)
+
     model_map = _load_model_map()
     model = _resolve_codex_model(model_key=MODEL_KEY, model_map=model_map)
     env['CODEX_MODEL'] = model
-    env['SVM_BENCH_DETECT_MD'] = str(DETECT_MD_PATH)
 
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     proc = subprocess.run(  # noqa: S603
@@ -260,7 +292,7 @@ def _run_codex_detect(*, openai_token: str, key_mode: str, provider: str = 'open
     return audit_md_path
 
 
-def _unpack_bundle(bundle: bytes, work_dir: Path) -> tuple[Path, str, str]:
+def _unpack_bundle(bundle: bytes, work_dir: Path) -> tuple[Path, str, str, str, str]:
     upload_zip_path = work_dir / 'upload.zip'
     key_payload: dict | None = None
 
@@ -300,11 +332,18 @@ def _unpack_bundle(bundle: bytes, work_dir: Path) -> tuple[Path, str, str]:
     if provider not in {'openai', 'openrouter'}:
         provider = 'openai'
 
+    effort = key_payload.get('effort') or 'medium'
+    if not isinstance(effort, str):
+        effort = 'medium'
+    effort = effort.strip().lower()
+    if effort not in {'low', 'medium', 'high'}:
+        effort = 'medium'
+
     if not upload_zip_path.exists():
         msg = 'Missing upload.zip in bundle'
         raise RuntimeError(msg)
 
-    return upload_zip_path, openai_token, key_mode, provider
+    return upload_zip_path, openai_token, key_mode, provider, effort
 
 
 async def main() -> None:
@@ -326,7 +365,7 @@ async def main() -> None:
 
     with tempfile.TemporaryDirectory(prefix='svmbench-worker-') as tmpdir:
         work_dir = Path(tmpdir)
-        upload_zip_path, openai_token, key_mode, provider = _unpack_bundle(bundle, work_dir)
+        upload_zip_path, openai_token, key_mode, provider, effort = _unpack_bundle(bundle, work_dir)
 
         if AUDIT_DIR.exists():
             shutil.rmtree(AUDIT_DIR)
@@ -335,9 +374,9 @@ async def main() -> None:
         with zipfile.ZipFile(upload_zip_path, 'r') as zf:
             zf.extractall(AUDIT_DIR)  # noqa: S202
 
-        logger.info(f'Extracted the bundle, running detect-only agent with provider={provider}...')
+        logger.info(f'Extracted the bundle, running detect-only agent with provider={provider}, effort={effort}...')
         try:
-            audit_md = _run_codex_detect(openai_token=openai_token, key_mode=key_mode, provider=provider)
+            audit_md = _run_codex_detect(openai_token=openai_token, key_mode=key_mode, provider=provider, effort=effort)
             audit_text = audit_md.read_text()
             _extract_json_payload(audit_text)
 

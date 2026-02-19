@@ -96,12 +96,14 @@ export async function startJob(
   model: string,
   apiKey: string,
   provider: string = "openai",
+  effort: string = "medium",
 ): Promise<StartJobResponse> {
   const body = new FormData()
   body.append("file", file)
   body.append("model", model)
   body.append("openai_key", apiKey)
   body.append("provider", provider)
+  body.append("effort", effort)
 
   const response = await fetch(`${API_BASE}/v1/jobs/start`, {
     method: "POST",

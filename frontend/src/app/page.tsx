@@ -224,6 +224,17 @@ export default function Page() {
                         className="size-3.5"
                       />
                     </Link>
+                    <Link
+                      href="/results?job_id=628dc527-3711-47ce-8cc3-63703c33ebf6"
+                      className="inline-flex items-center gap-0.5 font-serif leading-tight underline-offset-4 hover:text-foreground hover:underline"
+                    >
+                      example audit
+                      <HugeiconsIcon
+                        icon={ArrowUpRight01Icon}
+                        strokeWidth={2}
+                        className="size-3.5"
+                      />
+                    </Link>
                   </div>
                 </div>
               </div>

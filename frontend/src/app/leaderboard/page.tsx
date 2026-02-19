@@ -1,6 +1,6 @@
 "use client"
 
-import { ArrowUpRight01Icon } from "@hugeicons/core-free-icons"
+import { ArrowLeft01Icon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 import Link from "next/link"
 import { useEffect, useState } from "react"
@@ -9,7 +9,6 @@ import { AppHeader } from "@/components/app-header"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { API_BASE } from "@/lib/api"
-import { cn } from "@/lib/utils"
 
 interface SeverityBreakdown {
   critical: number
@@ -45,10 +44,6 @@ function formatDuration(seconds: number | null): string {
   return `${mins}m ${secs}s`
 }
 
-function formatPercent(rate: number): string {
-  return `${(rate * 100).toFixed(1)}%`
-}
-
 export default function LeaderboardPage() {
   const [data, setData] = useState<LeaderboardResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -78,9 +73,21 @@ export default function LeaderboardPage() {
       <section className="flex flex-1 flex-col px-6 py-8">
         <div className="mx-auto w-full max-w-5xl">
           <div className="mb-8">
-            <h1 className="text-3xl font-serif text-foreground mb-2">
-              leaderboard
-            </h1>
+            <div className="flex items-center gap-2 mb-2">
+              <Link
+                href="/"
+                className="text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <HugeiconsIcon
+                  icon={ArrowLeft01Icon}
+                  strokeWidth={2}
+                  className="size-6"
+                />
+              </Link>
+              <h1 className="text-3xl font-serif text-foreground">
+                leaderboard
+              </h1>
+            </div>
             <p className="text-sm text-muted-foreground">
               model performance benchmarks based on completed audits
             </p>
@@ -119,7 +126,6 @@ export default function LeaderboardPage() {
                         <th className="pb-3 pr-4 font-medium">#</th>
                         <th className="pb-3 pr-4 font-medium">model</th>
                         <th className="pb-3 pr-4 font-medium text-right">audits</th>
-                        <th className="pb-3 pr-4 font-medium text-right">success</th>
                         <th className="pb-3 pr-4 font-medium text-right">avg time</th>
                         <th className="pb-3 pr-4 font-medium text-right">vulns found</th>
                         <th className="pb-3 pr-4 font-medium text-right">avg/audit</th>
@@ -130,10 +136,7 @@ export default function LeaderboardPage() {
                       {data.models.map((model, idx) => (
                         <tr
                           key={model.model}
-                          className={cn(
-                            "border-b border-muted/50 transition-colors hover:bg-muted/30",
-                            idx === 0 && "bg-primary/5"
-                          )}
+                          className="border-b border-muted/50"
                         >
                           <td className="py-4 pr-4 font-mono text-muted-foreground">
                             {idx + 1}
@@ -145,19 +148,6 @@ export default function LeaderboardPage() {
                           </td>
                           <td className="py-4 pr-4 text-right font-mono">
                             {model.total_jobs}
-                          </td>
-                          <td className="py-4 pr-4 text-right font-mono">
-                            <span
-                              className={cn(
-                                model.success_rate >= 0.9
-                                  ? "text-green-500"
-                                  : model.success_rate >= 0.7
-                                    ? "text-yellow-500"
-                                    : "text-red-500"
-                              )}
-                            >
-                              {formatPercent(model.success_rate)}
-                            </span>
                           </td>
                           <td className="py-4 pr-4 text-right font-mono text-muted-foreground">
                             {formatDuration(model.avg_duration_seconds)}

@@ -12,6 +12,11 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -259,24 +264,54 @@ export default function Page() {
                 )}
                 <div className="grid gap-1">
                   <Label className="text-xs text-foreground">
-                    Models ({selectedModels.length} selected)
+                    Models
                   </Label>
-                  <div className="max-h-48 space-y-1 overflow-y-auto rounded-md border border-input bg-background p-2">
-                    {models.map((m) => (
-                      <label
-                        key={m.value}
-                        className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 hover:bg-muted/50"
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        className="flex h-9 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-xs ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
                       >
-                        <Checkbox
-                          checked={selectedModels.includes(m.value)}
-                          onCheckedChange={(checked) =>
-                            handleModelToggle(m.value, checked === true)
-                          }
-                        />
-                        <span className="text-xs">{m.label}</span>
-                      </label>
-                    ))}
-                  </div>
+                        <span className="truncate text-muted-foreground">
+                          {selectedModels.length === 0
+                            ? "Select models..."
+                            : `${selectedModels.length} model${selectedModels.length > 1 ? "s" : ""} selected`}
+                        </span>
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          width="12"
+                          height="12"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          className="opacity-50"
+                        >
+                          <path d="m6 9 6 6 6-6" />
+                        </svg>
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-1" align="start">
+                      <div className="max-h-64 space-y-0.5 overflow-y-auto">
+                        {models.map((m) => (
+                          <label
+                            key={m.value}
+                            className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-muted/50"
+                          >
+                            <Checkbox
+                              checked={selectedModels.includes(m.value)}
+                              onCheckedChange={(checked) =>
+                                handleModelToggle(m.value, checked === true)
+                              }
+                            />
+                            <span className="text-xs">{m.label}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
                 </div>
                 <div className="grid gap-1">
                   <Label

@@ -15,6 +15,7 @@ class StartJobForm(BaseModel):
 
     model: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
     openai_key: Annotated[str | None, StringConstraints(strip_whitespace=True, min_length=1)]
+    provider: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] = 'openai'
     file: UploadFile
 
     @classmethod
@@ -23,9 +24,10 @@ class StartJobForm(BaseModel):
         model: Annotated[str, Form()],
         file: Annotated[UploadFile, File()],
         openai_key: Annotated[str | None, Form()] = None,
+        provider: Annotated[str, Form()] = 'openai',
     ) -> 'StartJobForm':
         try:
-            return cls(model=model, openai_key=openai_key, file=file)
+            return cls(model=model, openai_key=openai_key, provider=provider, file=file)
         except ValidationError as exc:
             # TODO(es3n1n): this is **very** bad
             errors = exc.errors()
@@ -71,7 +73,7 @@ class StartJobForm(BaseModel):
             max_uncompressed_bytes=settings.BACKEND_MAX_ATTACHMENT_UNCOMPRESSED_BYTES,
             max_files=settings.BACKEND_ZIP_MAX_FILES,
             max_ratio=settings.BACKEND_ZIP_MAX_COMPRESSION_RATIO,
-            require_solidity=True,
+            require_rust=True,
         )
 
         return value

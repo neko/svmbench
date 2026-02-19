@@ -2,6 +2,7 @@
 
 import { ArrowUpRight01Icon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useCallback, useMemo, useState } from "react"
 import { AppFooter } from "@/components/app-footer"
@@ -212,6 +213,17 @@ export default function Page() {
                         className="size-3.5"
                       />
                     </a>
+                    <Link
+                      href="/leaderboard"
+                      className="inline-flex items-center gap-0.5 font-serif leading-tight underline-offset-4 hover:text-foreground hover:underline"
+                    >
+                      leaderboard
+                      <HugeiconsIcon
+                        icon={ArrowUpRight01Icon}
+                        strokeWidth={2}
+                        className="size-3.5"
+                      />
+                    </Link>
                   </div>
                 </div>
               </div>

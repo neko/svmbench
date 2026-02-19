@@ -8,6 +8,14 @@
 
 <a href="#how-it-works"><b><u>how it works</u></b></a> | <a href="#security"><b><u>security</u></b></a> | <a href="#key-services"><b><u>key services</u></b></a> | <a href="#repo-layout"><b><u>repo layout</u></b></a> | <a href="#quickstart-local-dev"><b><u>quickstart (local dev)</u></b></a>
 
+### fork changes from [evmbench](https://github.com/paradigmxyz/evmbench)
+
+- **solana/anchor** instead of evm/solidity
+- **multi-model support** - run audits with multiple models simultaneously
+- **openrouter support** - use any openrouter-compatible model
+- **effort levels** - low/medium/high runtime presets for cost control
+- **token usage optimization** - reduced prompt overhead and smarter context management
+
 this repository contains a companion interface to the `svmbench` detect evaluation ([code](https://github.com/openai/frontier-evals)).
 
 upload anchor/solana program source code, select an agent, and receive a structured vulnerability report rendered in the ui.

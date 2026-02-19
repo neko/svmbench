@@ -4,9 +4,21 @@ import { ArrowLeft01Icon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 import Link from "next/link"
 import { useEffect, useState } from "react"
+import {
+  Bar,
+  BarChart,
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts"
 import { AppFooter } from "@/components/app-footer"
 import { AppHeader } from "@/components/app-header"
 import { Badge } from "@/components/ui/badge"
+import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { API_BASE } from "@/lib/api"
 
@@ -36,12 +48,26 @@ interface LeaderboardResponse {
   last_updated: string
 }
 
+const SEVERITY_COLORS = {
+  critical: "#ef4444",
+  high: "#f97316",
+  medium: "#eab308",
+  low: "#6b7280",
+  info: "#3b82f6",
+}
+
 function formatDuration(seconds: number | null): string {
   if (seconds === null) return "-"
   if (seconds < 60) return `${Math.round(seconds)}s`
   const mins = Math.floor(seconds / 60)
   const secs = Math.round(seconds % 60)
   return `${mins}m ${secs}s`
+}
+
+function getShortModelName(model: string): string {
+  // Extract just the model name without provider prefix
+  const parts = model.split("/")
+  return parts[parts.length - 1]
 }
 
 export default function LeaderboardPage() {
@@ -67,11 +93,44 @@ export default function LeaderboardPage() {
     fetchLeaderboard()
   }, [])
 
+  // Prepare chart data
+  const vulnsBarData = data?.models.map((m) => ({
+    name: getShortModelName(m.model),
+    vulnerabilities: m.total_vulnerabilities,
+    avgPerAudit: m.avg_vulnerabilities_per_audit,
+  })) ?? []
+
+  const totalSeverity = data?.models.reduce(
+    (acc, m) => ({
+      critical: acc.critical + m.severity_breakdown.critical,
+      high: acc.high + m.severity_breakdown.high,
+      medium: acc.medium + m.severity_breakdown.medium,
+      low: acc.low + m.severity_breakdown.low,
+      info: acc.info + m.severity_breakdown.info,
+    }),
+    { critical: 0, high: 0, medium: 0, low: 0, info: 0 }
+  ) ?? { critical: 0, high: 0, medium: 0, low: 0, info: 0 }
+
+  const severityPieData = [
+    { name: "Critical", value: totalSeverity.critical, color: SEVERITY_COLORS.critical },
+    { name: "High", value: totalSeverity.high, color: SEVERITY_COLORS.high },
+    { name: "Medium", value: totalSeverity.medium, color: SEVERITY_COLORS.medium },
+    { name: "Low", value: totalSeverity.low, color: SEVERITY_COLORS.low },
+    { name: "Info", value: totalSeverity.info, color: SEVERITY_COLORS.info },
+  ].filter((d) => d.value > 0)
+
+  const avgTimeBarData = data?.models
+    .filter((m) => m.avg_duration_seconds !== null)
+    .map((m) => ({
+      name: getShortModelName(m.model),
+      seconds: Math.round(m.avg_duration_seconds ?? 0),
+    })) ?? []
+
   return (
     <main className="flex min-h-screen w-screen flex-col">
       <AppHeader />
       <section className="flex flex-1 flex-col px-6 py-8">
-        <div className="mx-auto w-full max-w-5xl">
+        <div className="mx-auto w-full max-w-6xl">
           <div className="mb-8">
             <div className="flex items-center gap-2 mb-2">
               <Link
@@ -119,82 +178,181 @@ export default function LeaderboardPage() {
                   no audit data available yet
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b text-left text-muted-foreground">
-                        <th className="pb-3 pr-4 font-medium">#</th>
-                        <th className="pb-3 pr-4 font-medium">model</th>
-                        <th className="pb-3 pr-4 font-medium text-right">audits</th>
-                        <th className="pb-3 pr-4 font-medium text-right">avg time</th>
-                        <th className="pb-3 pr-4 font-medium text-right">vulns found</th>
-                        <th className="pb-3 pr-4 font-medium text-right">avg/audit</th>
-                        <th className="pb-3 font-medium">severity breakdown</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.models.map((model, idx) => (
-                        <tr
-                          key={model.model}
-                          className="border-b border-muted/50"
-                        >
-                          <td className="py-4 pr-4 font-mono text-muted-foreground">
-                            {idx + 1}
-                          </td>
-                          <td className="py-4 pr-4">
-                            <span className="font-medium text-foreground">
-                              {model.model}
-                            </span>
-                          </td>
-                          <td className="py-4 pr-4 text-right font-mono">
-                            {model.total_jobs}
-                          </td>
-                          <td className="py-4 pr-4 text-right font-mono text-muted-foreground">
-                            {formatDuration(model.avg_duration_seconds)}
-                          </td>
-                          <td className="py-4 pr-4 text-right font-mono">
-                            {model.total_vulnerabilities}
-                          </td>
-                          <td className="py-4 pr-4 text-right font-mono">
-                            {model.avg_vulnerabilities_per_audit}
-                          </td>
-                          <td className="py-4">
-                            <div className="flex flex-wrap gap-1">
-                              {model.severity_breakdown.critical > 0 && (
-                                <Badge variant="destructive" className="text-xs">
-                                  C: {model.severity_breakdown.critical}
-                                </Badge>
-                              )}
-                              {model.severity_breakdown.high > 0 && (
-                                <Badge className="bg-orange-500 text-xs hover:bg-orange-600">
-                                  H: {model.severity_breakdown.high}
-                                </Badge>
-                              )}
-                              {model.severity_breakdown.medium > 0 && (
-                                <Badge className="bg-yellow-500 text-xs text-black hover:bg-yellow-600">
-                                  M: {model.severity_breakdown.medium}
-                                </Badge>
-                              )}
-                              {model.severity_breakdown.low > 0 && (
-                                <Badge variant="secondary" className="text-xs">
-                                  L: {model.severity_breakdown.low}
-                                </Badge>
-                              )}
-                              {model.severity_breakdown.info > 0 && (
-                                <Badge variant="outline" className="text-xs">
-                                  I: {model.severity_breakdown.info}
-                                </Badge>
-                              )}
-                              {model.total_vulnerabilities === 0 && (
-                                <span className="text-xs text-muted-foreground">-</span>
-                              )}
-                            </div>
-                          </td>
+                <>
+                  {/* Charts Section */}
+                  <div className="mb-8 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                    {/* Vulnerabilities by Model */}
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <h3 className="text-sm font-medium text-foreground">vulnerabilities found</h3>
+                      </CardHeader>
+                      <CardContent>
+                        <ResponsiveContainer width="100%" height={200}>
+                          <BarChart data={vulnsBarData} layout="vertical">
+                            <XAxis type="number" tick={{ fontSize: 10 }} />
+                            <YAxis
+                              type="category"
+                              dataKey="name"
+                              tick={{ fontSize: 10 }}
+                              width={80}
+                            />
+                            <Tooltip
+                              contentStyle={{
+                                backgroundColor: "hsl(var(--card))",
+                                border: "1px solid hsl(var(--border))",
+                                borderRadius: "6px",
+                                fontSize: "12px",
+                              }}
+                            />
+                            <Bar dataKey="vulnerabilities" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </CardContent>
+                    </Card>
+
+                    {/* Severity Distribution */}
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <h3 className="text-sm font-medium text-foreground">severity distribution</h3>
+                      </CardHeader>
+                      <CardContent>
+                        <ResponsiveContainer width="100%" height={200}>
+                          <PieChart>
+                            <Pie
+                              data={severityPieData}
+                              cx="50%"
+                              cy="50%"
+                              innerRadius={40}
+                              outerRadius={70}
+                              dataKey="value"
+                              label={({ name, value }) => `${name}: ${value}`}
+                              labelLine={false}
+                            >
+                              {severityPieData.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={entry.color} />
+                              ))}
+                            </Pie>
+                            <Tooltip
+                              contentStyle={{
+                                backgroundColor: "hsl(var(--card))",
+                                border: "1px solid hsl(var(--border))",
+                                borderRadius: "6px",
+                                fontSize: "12px",
+                              }}
+                            />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </CardContent>
+                    </Card>
+
+                    {/* Average Time */}
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <h3 className="text-sm font-medium text-foreground">avg audit time (seconds)</h3>
+                      </CardHeader>
+                      <CardContent>
+                        <ResponsiveContainer width="100%" height={200}>
+                          <BarChart data={avgTimeBarData} layout="vertical">
+                            <XAxis type="number" tick={{ fontSize: 10 }} />
+                            <YAxis
+                              type="category"
+                              dataKey="name"
+                              tick={{ fontSize: 10 }}
+                              width={80}
+                            />
+                            <Tooltip
+                              contentStyle={{
+                                backgroundColor: "hsl(var(--card))",
+                                border: "1px solid hsl(var(--border))",
+                                borderRadius: "6px",
+                                fontSize: "12px",
+                              }}
+                            />
+                            <Bar dataKey="seconds" fill="hsl(var(--muted-foreground))" radius={[0, 4, 4, 0]} />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </CardContent>
+                    </Card>
+                  </div>
+
+                  {/* Table */}
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b text-left text-muted-foreground">
+                          <th className="pb-3 pr-4 font-medium">#</th>
+                          <th className="pb-3 pr-4 font-medium">model</th>
+                          <th className="pb-3 pr-4 font-medium text-right">audits</th>
+                          <th className="pb-3 pr-4 font-medium text-right">avg time</th>
+                          <th className="pb-3 pr-4 font-medium text-right">vulns found</th>
+                          <th className="pb-3 pr-4 font-medium text-right">avg/audit</th>
+                          <th className="pb-3 font-medium">severity breakdown</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody>
+                        {data.models.map((model, idx) => (
+                          <tr
+                            key={model.model}
+                            className="border-b border-muted/50"
+                          >
+                            <td className="py-4 pr-4 font-mono text-muted-foreground">
+                              {idx + 1}
+                            </td>
+                            <td className="py-4 pr-4">
+                              <span className="font-medium text-foreground">
+                                {model.model}
+                              </span>
+                            </td>
+                            <td className="py-4 pr-4 text-right font-mono">
+                              {model.total_jobs}
+                            </td>
+                            <td className="py-4 pr-4 text-right font-mono text-muted-foreground">
+                              {formatDuration(model.avg_duration_seconds)}
+                            </td>
+                            <td className="py-4 pr-4 text-right font-mono">
+                              {model.total_vulnerabilities}
+                            </td>
+                            <td className="py-4 pr-4 text-right font-mono">
+                              {model.avg_vulnerabilities_per_audit}
+                            </td>
+                            <td className="py-4">
+                              <div className="flex flex-wrap gap-1">
+                                {model.severity_breakdown.critical > 0 && (
+                                  <Badge variant="destructive" className="text-xs">
+                                    C: {model.severity_breakdown.critical}
+                                  </Badge>
+                                )}
+                                {model.severity_breakdown.high > 0 && (
+                                  <Badge className="bg-orange-500 text-xs hover:bg-orange-500">
+                                    H: {model.severity_breakdown.high}
+                                  </Badge>
+                                )}
+                                {model.severity_breakdown.medium > 0 && (
+                                  <Badge className="bg-yellow-500 text-xs text-black hover:bg-yellow-500">
+                                    M: {model.severity_breakdown.medium}
+                                  </Badge>
+                                )}
+                                {model.severity_breakdown.low > 0 && (
+                                  <Badge variant="secondary" className="text-xs">
+                                    L: {model.severity_breakdown.low}
+                                  </Badge>
+                                )}
+                                {model.severity_breakdown.info > 0 && (
+                                  <Badge variant="outline" className="text-xs">
+                                    I: {model.severity_breakdown.info}
+                                  </Badge>
+                                )}
+                                {model.total_vulnerabilities === 0 && (
+                                  <span className="text-xs text-muted-foreground">-</span>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
               )}
             </>
           )}

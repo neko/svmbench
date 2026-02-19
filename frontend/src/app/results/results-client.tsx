@@ -385,6 +385,19 @@ export default function ResultsClient() {
 
   const emptyState = useMemo(() => {
     if (isRunComplete && !files) {
+      // For public audits, show a simple message instead of file uploader
+      if (isPublicAudit) {
+        return (
+          <div className="w-full space-y-1 text-center">
+            <p className="text-sm text-foreground">
+              Source code not available
+            </p>
+            <p className="text-base text-muted-foreground">
+              This is a public audit. View vulnerabilities in the panel below.
+            </p>
+          </div>
+        )
+      }
       return null
     }
     if (!files) {
@@ -429,9 +442,12 @@ export default function ResultsClient() {
     handlePromptFiles,
     validationError,
     isRunComplete,
+    isPublicAudit,
   ])
 
-  const shouldGateResults = isRunComplete && !files
+  // Skip the file requirement gate for public audits
+  const isPublicAudit = job?.public === true
+  const shouldGateResults = isRunComplete && !files && !isPublicAudit
   const statusError = jobError || job?.error
 
   return (

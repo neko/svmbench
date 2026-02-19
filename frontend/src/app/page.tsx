@@ -270,7 +270,7 @@ export default function Page() {
                     <PopoverTrigger asChild>
                       <button
                         type="button"
-                        className="flex h-9 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-xs ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                        className="border-input bg-input/20 dark:bg-input/30 dark:hover:bg-input/50 focus-visible:border-ring focus-visible:ring-ring/30 flex h-7 w-full items-center justify-between gap-1.5 rounded-md border px-2 py-1.5 text-xs/relaxed transition-colors focus-visible:ring-2 outline-none"
                       >
                         <span className="truncate text-muted-foreground">
                           {selectedModels.length === 0
@@ -279,17 +279,18 @@ export default function Page() {
                         </span>
                         <svg
                           xmlns="http://www.w3.org/2000/svg"
-                          width="12"
-                          height="12"
+                          width="14"
+                          height="14"
                           viewBox="0 0 24 24"
                           fill="none"
                           stroke="currentColor"
                           strokeWidth="2"
                           strokeLinecap="round"
                           strokeLinejoin="round"
-                          className="opacity-50"
+                          className="shrink-0 text-muted-foreground"
                         >
-                          <path d="m6 9 6 6 6-6" />
+                          <path d="m7 15 5 5 5-5" />
+                          <path d="m7 9 5-5 5 5" />
                         </svg>
                       </button>
                     </PopoverTrigger>

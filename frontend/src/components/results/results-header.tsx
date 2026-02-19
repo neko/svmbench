@@ -43,6 +43,9 @@ interface ResultsHeaderProps {
   isUpdatingPublic?: boolean
   shareError?: string | null
   isAuthEnabled?: boolean
+  batchJobs?: JobResponse[]
+  selectedModel?: string | null
+  onModelSelect?: (model: string) => void
 }
 
 function JobDetailsContent({
@@ -194,9 +197,13 @@ export function ResultsHeader({
   isUpdatingPublic = false,
   shareError,
   isAuthEnabled = true,
+  batchJobs = [],
+  selectedModel,
+  onModelSelect,
 }: ResultsHeaderProps) {
   const isMobile = useMediaQuery("(max-width: 768px)")
   const statusError = error || job?.error || null
+  const isBatchMode = batchJobs.length > 1
   const sharePath = jobId ? `/results?job_id=${jobId}` : ""
   const isSharePublic = !isAuthEnabled || Boolean(job?.public)
 
@@ -285,6 +292,29 @@ export function ResultsHeader({
       right={
         jobId ? (
           <div className="flex items-center gap-2">
+            {isBatchMode && onModelSelect && (
+              <Select
+                value={selectedModel ?? batchJobs[0]?.model}
+                onValueChange={onModelSelect}
+              >
+                <SelectTrigger className="h-7 w-[200px] text-xs">
+                  <SelectValue placeholder="Select model" />
+                </SelectTrigger>
+                <SelectContent>
+                  {batchJobs.map((batchJob) => (
+                    <SelectItem key={batchJob.job_id} value={batchJob.model}>
+                      <div className="flex items-center gap-2">
+                        <JobStatusDot
+                          status={batchJob.status}
+                          pulse={isJobActive(batchJob.status)}
+                        />
+                        <span>{batchJob.model}</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
             <Popover>
               <PopoverTrigger asChild>{runNameButton}</PopoverTrigger>
               <PopoverContent align="end" className="w-80">

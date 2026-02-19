@@ -8,6 +8,7 @@ import { AppFooter } from "@/components/app-footer"
 import { AppHeader } from "@/components/app-header"
 import { FileUploader } from "@/components/file-uploader"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -50,7 +51,7 @@ export default function Page() {
   const { files, packageName, setUpload, clearUpload } = useUploadStore()
   const [apiKey, setApiKey] = useSessionStorage("svmbench.apiKey", "")
   const [provider, setProvider] = useState<"openai" | "openrouter">("openai")
-  const [model, setModel] = useState("codex-gpt-5.2")
+  const [selectedModels, setSelectedModels] = useState<string[]>(["codex-gpt-5.2"])
   const [effort, setEffort] = useState<"low" | "medium" | "high">("medium")
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -75,7 +76,7 @@ export default function Page() {
   const models = provider === "openrouter" ? OPENROUTER_MODELS : OPENAI_MODELS
 
   const canSubmit =
-    !!files && fileCount > 0 && !isSubmitting && !isAuthLoading && isAuthorized
+    !!files && fileCount > 0 && !isSubmitting && !isAuthLoading && isAuthorized && selectedModels.length > 0
 
   const handleFilesSelected = useCallback(
     (selected: File[]) => {
@@ -94,12 +95,24 @@ export default function Page() {
   const handleProviderChange = useCallback(
     (value: "openai" | "openrouter") => {
       setProvider(value)
-      // Reset model to first available for new provider
+      // Reset models to first available for new provider
       if (value === "openrouter") {
-        setModel(OPENROUTER_MODELS[0].value)
+        setSelectedModels([OPENROUTER_MODELS[0].value])
       } else {
-        setModel(OPENAI_MODELS[0].value)
+        setSelectedModels([OPENAI_MODELS[0].value])
       }
+    },
+    [],
+  )
+
+  const handleModelToggle = useCallback(
+    (modelValue: string, checked: boolean) => {
+      setSelectedModels((prev) => {
+        if (checked) {
+          return [...prev, modelValue]
+        }
+        return prev.filter((m) => m !== modelValue)
+      })
     },
     [],
   )
@@ -110,6 +123,10 @@ export default function Page() {
       setSubmitError("Authorize with GitHub to start analysis.")
       return
     }
+    if (selectedModels.length === 0) {
+      setSubmitError("Select at least one model.")
+      return
+    }
     const trimmedKey = apiKey.trim()
 
     setIsSubmitting(true)
@@ -118,14 +135,21 @@ export default function Page() {
     try {
       const name = selectedLabel ?? "files"
       const zipFile = await createZipFromFiles(files, name)
-      const response = await startJob(zipFile, model, trimmedKey, provider, effort)
-      const next = addRecentJob({
-        job_id: response.job_id,
-        label: name,
+      const response = await startJob(zipFile, selectedModels, trimmedKey, provider, effort)
+      // Add all jobs to recent list
+      for (const job of response.jobs) {
+        addRecentJob({
+          job_id: job.job_id,
+          label: `${name} (${job.model})`,
+          created_at_ms: Date.now(),
+        })
+      }
+      setRecentJobs(addRecentJob({
+        job_id: response.batch_id,
+        label: `${name} (${selectedModels.length} models)`,
         created_at_ms: Date.now(),
-      })
-      setRecentJobs(next)
-      router.push(`/results?job_id=${response.job_id}`)
+      }))
+      router.push(`/results?batch_id=${response.batch_id}`)
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "Upload failed")
     } finally {
@@ -234,24 +258,25 @@ export default function Page() {
                   </div>
                 )}
                 <div className="grid gap-1">
-                  <Label
-                    htmlFor="model-select"
-                    className="text-xs text-foreground"
-                  >
-                    Model
+                  <Label className="text-xs text-foreground">
+                    Models ({selectedModels.length} selected)
                   </Label>
-                  <Select value={model} onValueChange={setModel}>
-                    <SelectTrigger id="model-select" className="w-full">
-                      <SelectValue placeholder="Select model" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {models.map((m) => (
-                        <SelectItem key={m.value} value={m.value}>
-                          {m.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="max-h-48 space-y-1 overflow-y-auto rounded-md border border-input bg-background p-2">
+                    {models.map((m) => (
+                      <label
+                        key={m.value}
+                        className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 hover:bg-muted/50"
+                      >
+                        <Checkbox
+                          checked={selectedModels.includes(m.value)}
+                          onCheckedChange={(checked) =>
+                            handleModelToggle(m.value, checked === true)
+                          }
+                        />
+                        <span className="text-xs">{m.label}</span>
+                      </label>
+                    ))}
+                  </div>
                 </div>
                 <div className="grid gap-1">
                   <Label

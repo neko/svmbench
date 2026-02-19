@@ -19,13 +19,18 @@ class JobStatus(enum.Enum):
 # TODO(es3n1n): revamp
 class Job(Base):
     __tablename__ = 'jobs'
-    __table_args__ = (Index('ix_jobs_status_created_at_id', 'status', 'created_at', 'id'),)
+    __table_args__ = (
+        Index('ix_jobs_status_created_at_id', 'status', 'created_at', 'id'),
+        Index('ix_jobs_batch_id', 'batch_id'),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         Uuid,
         primary_key=True,
         default=uuid.uuid4,
     )
+
+    batch_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
 
     status: Mapped[JobStatus] = mapped_column(
         Enum(JobStatus),

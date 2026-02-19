@@ -13,7 +13,7 @@ from api.util.zip_validate import validate_upload_zip
 class StartJobForm(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    model: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    models: list[str]
     openai_key: Annotated[str | None, StringConstraints(strip_whitespace=True, min_length=1)]
     provider: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] = 'openai'
     effort: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] = 'medium'
@@ -22,14 +22,14 @@ class StartJobForm(BaseModel):
     @classmethod
     def as_form(
         cls,
-        model: Annotated[str, Form()],
         file: Annotated[UploadFile, File()],
+        models: Annotated[list[str], Form()] = [],
         openai_key: Annotated[str | None, Form()] = None,
         provider: Annotated[str, Form()] = 'openai',
         effort: Annotated[str, Form()] = 'medium',
     ) -> 'StartJobForm':
         try:
-            return cls(model=model, openai_key=openai_key, provider=provider, effort=effort, file=file)
+            return cls(models=models, openai_key=openai_key, provider=provider, effort=effort, file=file)
         except ValidationError as exc:
             # TODO(es3n1n): this is **very** bad
             errors = exc.errors()
@@ -46,6 +46,13 @@ class StartJobForm(BaseModel):
             if not messages:
                 messages = ['Invalid request']
             raise HTTPException(status_code=412, detail=messages[0]) from exc
+
+    @field_validator('models', mode='before')
+    @classmethod
+    def parse_models(cls, value: str | list[str]) -> list[str]:
+        if isinstance(value, str):
+            return [m.strip() for m in value.split(',') if m.strip()]
+        return [m.strip() for m in value if m.strip()]
 
     @model_validator(mode='after')
     def require_openai_key(self) -> 'StartJobForm':
@@ -90,7 +97,15 @@ class PatchJobForm(BaseModel):
 class StartJobResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    job_id: UUID
+    batch_id: UUID
+    jobs: list['BatchJobItem']
+
+
+class BatchJobItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+    job_id: UUID = Field(validation_alias='id')
+    model: str
     status: JobStatus
 
 
@@ -98,6 +113,7 @@ class JobStatusResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
     job_id: UUID = Field(validation_alias='id')
+    batch_id: UUID | None = None
     status: JobStatus
     result: dict | None
     error: str | None = Field(validation_alias='result_error')
@@ -115,6 +131,8 @@ class JobHistoryItem(BaseModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
     job_id: UUID = Field(validation_alias='id')
+    batch_id: UUID | None = None
+    model: str
     status: JobStatus
     created_at: datetime
     finished_at: datetime | None

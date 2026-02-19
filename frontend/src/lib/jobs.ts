@@ -4,13 +4,20 @@ import type { Severity, Vulnerability } from "@/types"
 
 export type JobStatus = "queued" | "running" | "succeeded" | "failed"
 
-export interface StartJobResponse {
+export interface BatchJobItem {
   job_id: string
+  model: string
   status: JobStatus
+}
+
+export interface StartJobResponse {
+  batch_id: string
+  jobs: BatchJobItem[]
 }
 
 export interface JobResponse {
   job_id: string
+  batch_id: string | null
   status: JobStatus
   result: JobReport | null
   error: string | null
@@ -70,6 +77,24 @@ export async function fetchJob(
   return response.json()
 }
 
+export async function fetchBatch(
+  batchId: string,
+  signal?: AbortSignal,
+): Promise<JobResponse[]> {
+  const response = await fetch(`${API_BASE}/v1/jobs/batch/${batchId}`, {
+    signal,
+    cache: "no-store",
+    credentials: "include",
+  })
+
+  if (!response.ok) {
+    const message = await readApiError(response)
+    throw new Error(message ?? `Failed to fetch batch (${response.status})`)
+  }
+
+  return response.json()
+}
+
 export async function setJobPublic(
   jobId: string,
   isPublic: boolean,
@@ -93,14 +118,14 @@ export async function setJobPublic(
 
 export async function startJob(
   file: File,
-  model: string,
+  models: string[],
   apiKey: string,
   provider: string = "openai",
   effort: string = "medium",
 ): Promise<StartJobResponse> {
   const body = new FormData()
   body.append("file", file)
-  body.append("model", model)
+  body.append("models", models.join(","))
   body.append("openai_key", apiKey)
   body.append("provider", provider)
   body.append("effort", effort)

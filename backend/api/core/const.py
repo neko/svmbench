@@ -4,17 +4,16 @@ ALLOWED_MODELS = {
 }
 
 OPENROUTER_ALLOWED_MODELS = {
+    'minimax/minimax-m2.5',
+    'moonshotai/kimi-k2.5',
+    'z-ai/glm-5',
+    'google/gemini-3-flash-preview',
+    'deepseek/deepseek-v3.2',
+    'anthropic/claude-opus-4.6',
+    'anthropic/claude-opus-4.5',
+    'x-ai/grok-4.1-fast',
     'openai/gpt-5.2-codex',
-    'openai/gpt-5.1-codex',
     'openai/gpt-5.1-codex-max',
-    'openai/gpt-5.2',
-    'openai/gpt-5.1',
-    'anthropic/claude-opus-4-5',
-    'anthropic/claude-sonnet-4-5',
-    'google/gemini-2.5-pro',
-    'google/gemini-2.5-flash',
-    'deepseek/deepseek-r1',
-    'deepseek/deepseek-chat',
 }
 
 ALLOWED_PROVIDERS = {'openai', 'openrouter'}

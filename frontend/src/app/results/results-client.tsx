@@ -29,6 +29,7 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable"
+import { useBatch } from "@/hooks/use-batch"
 import { useAuth } from "@/hooks/use-auth"
 import { useFileExplorer } from "@/hooks/use-file-explorer"
 import { useJob } from "@/hooks/use-job"
@@ -37,6 +38,7 @@ import { useMounted } from "@/hooks/use-mounted"
 import { useVulnerabilityNavigation } from "@/hooks/use-vulnerability-navigation"
 import { readFilesFromInput } from "@/lib/file-loader"
 import { validateFileData } from "@/lib/file-validation"
+import type { JobResponse } from "@/lib/jobs"
 import { mapJobVulnerabilities, setJobPublic } from "@/lib/jobs"
 import { normalizeFilePath } from "@/lib/paths"
 import { addRecentJob } from "@/lib/recent-jobs"
@@ -52,6 +54,8 @@ export default function ResultsClient() {
   const [urlState, setUrlState] = useQueryStates(
     {
       job_id: parseAsString,
+      batch_id: parseAsString,
+      model: parseAsString,
       file: parseAsString,
       vuln: parseAsString,
       line: parseAsInteger,
@@ -63,6 +67,7 @@ export default function ResultsClient() {
   )
 
   const jobId = urlState.job_id
+  const batchId = urlState.batch_id
 
   const { files, packageName, setUpload } = useUploadStore()
   const lastLoadedFiles = useRef<File[] | null>(null)
@@ -80,24 +85,70 @@ export default function ResultsClient() {
   const [validationError, setValidationError] = useState<string | null>(null)
   const [shareError, setShareError] = useState<string | null>(null)
   const [isUpdatingPublic, setIsUpdatingPublic] = useState(false)
+
+  // Single job mode
   const {
-    job,
-    error: jobError,
-    isLoading: isLoadingJob,
-    isComplete: isRunComplete,
-    shouldShowRunStatus,
-    setJob,
-  } = useJob(jobId)
+    job: singleJob,
+    error: singleJobError,
+    isLoading: isLoadingSingleJob,
+    isComplete: isSingleJobComplete,
+    shouldShowRunStatus: singleJobShowRunStatus,
+    setJob: setSingleJob,
+  } = useJob(batchId ? null : jobId)
+
+  // Batch mode
+  const {
+    jobs: batchJobs,
+    error: batchError,
+    isLoading: isLoadingBatch,
+    isComplete: isBatchComplete,
+    shouldShowRunStatus: batchShowRunStatus,
+    setJobs: setBatchJobs,
+  } = useBatch(batchId)
+
+  // Determine if we're in batch mode and which job to display
+  const isBatchMode = Boolean(batchId) && batchJobs.length > 0
+  const selectedModel = urlState.model
+  const selectedJobIndex = useMemo(() => {
+    if (!isBatchMode) return 0
+    if (!selectedModel) return 0
+    const index = batchJobs.findIndex((j) => j.model === selectedModel)
+    return index >= 0 ? index : 0
+  }, [isBatchMode, selectedModel, batchJobs])
+
+  const job: JobResponse | null = isBatchMode
+    ? batchJobs[selectedJobIndex] ?? null
+    : singleJob
+  const jobError = isBatchMode ? batchError : singleJobError
+  const isLoadingJob = isBatchMode ? isLoadingBatch : isLoadingSingleJob
+  const isRunComplete = isBatchMode ? isBatchComplete : isSingleJobComplete
+  const shouldShowRunStatus = isBatchMode ? batchShowRunStatus : singleJobShowRunStatus
+  const setJob = isBatchMode
+    ? (updated: JobResponse) => {
+        setBatchJobs((prev) =>
+          prev.map((j) => (j.job_id === updated.job_id ? updated : j)),
+        )
+      }
+    : setSingleJob
+
+  const handleModelSelect = useCallback(
+    (model: string) => {
+      setUrlState({ model, file: null, vuln: null, line: null })
+    },
+    [setUrlState],
+  )
 
   useEffect(() => {
-    if (!jobId || !job) return
+    if (!job) return
+    const idToStore = batchId ?? jobId
+    if (!idToStore) return
     // If a user lands here via a copied link, still remember it locally.
     addRecentJob({
-      job_id: jobId,
+      job_id: idToStore,
       label: job.file_name?.replace(/\.zip$/, "") ?? "run",
       created_at_ms: Date.now(),
     })
-  }, [jobId, job])
+  }, [jobId, batchId, job])
 
   const setUrlFile = useCallback(
     (file: string | null) => {
@@ -184,11 +235,11 @@ export default function ResultsClient() {
   }, [searchParams, setUrlState, urlState.job_id])
 
   const hasRestoredFromUrl = useRef(false)
-  const lastRestoredJobId = useRef<string | null | undefined>(undefined)
+  const lastRestoredId = useRef<string | null | undefined>(undefined)
   useEffect(() => {
-    if (lastRestoredJobId.current !== jobId) {
+    if (lastRestoredId.current !== currentId) {
       hasRestoredFromUrl.current = false
-      lastRestoredJobId.current = jobId
+      lastRestoredId.current = currentId
     }
     if (
       fileTree.length > 0 &&
@@ -204,7 +255,7 @@ export default function ResultsClient() {
     fileTree.length,
     urlState.file,
     navigateToFile,
-    jobId,
+    currentId,
   ])
 
   const handlePromptFiles = useCallback(
@@ -257,19 +308,20 @@ export default function ResultsClient() {
     clearSelectionRef.current = clearSelection
   }, [clearSelection])
 
-  const prevJobIdRef = useRef<string | null | undefined>(undefined)
+  const prevIdRef = useRef<string | null | undefined>(undefined)
+  const currentId = batchId ?? jobId
   useEffect(() => {
-    if (prevJobIdRef.current !== undefined && prevJobIdRef.current !== jobId) {
+    if (prevIdRef.current !== undefined && prevIdRef.current !== currentId) {
       setUrlState({ file: null, vuln: null, line: null })
     }
-    prevJobIdRef.current = jobId
-  }, [jobId, setUrlState])
+    prevIdRef.current = currentId
+  }, [currentId, setUrlState])
 
   useEffect(() => {
-    if (jobId !== undefined) {
+    if (currentId !== undefined) {
       setShareError(null)
     }
-  }, [jobId])
+  }, [currentId])
 
   const resetBothPanels = useCallback(() => {
     fileTreePanelRef.current?.resize("50%")
@@ -315,11 +367,12 @@ export default function ResultsClient() {
   }, [bugViewerPanelRef, fileTreePanelRef, resetBothPanels])
 
   const handleTogglePublic = useCallback(async () => {
-    if (!jobId || !job) return
+    const currentJobId = job?.job_id
+    if (!currentJobId || !job) return
     setShareError(null)
     setIsUpdatingPublic(true)
     try {
-      const updated = await setJobPublic(jobId, !job.public)
+      const updated = await setJobPublic(currentJobId, !job.public)
       setJob(updated)
     } catch (error) {
       setShareError(
@@ -328,7 +381,7 @@ export default function ResultsClient() {
     } finally {
       setIsUpdatingPublic(false)
     }
-  }, [jobId, job, setJob])
+  }, [job, setJob])
 
   const emptyState = useMemo(() => {
     if (isRunComplete && !files) {
@@ -384,7 +437,7 @@ export default function ResultsClient() {
   return (
     <main className="flex min-h-screen w-screen flex-col md:h-screen">
       <ResultsHeader
-        jobId={jobId}
+        jobId={job?.job_id ?? jobId}
         job={job}
         isLoading={isLoadingJob}
         error={jobError}
@@ -392,6 +445,9 @@ export default function ResultsClient() {
         isUpdatingPublic={isUpdatingPublic}
         shareError={shareError}
         isAuthEnabled={isAuthEnabled}
+        batchJobs={batchJobs}
+        selectedModel={selectedModel}
+        onModelSelect={handleModelSelect}
       />
       {statusError && (
         <div className="border-b border-border/60 bg-destructive/10 px-4 py-2 text-xs text-destructive">

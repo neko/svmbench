@@ -15,7 +15,7 @@ from api.core.deps import OptionalTokenDep, TokenDep, get_db
 from api.core.impl import auth_backend
 from api.core.rabbitmq import RabbitMQPublisher, get_rabbitmq_publisher
 from api.models.job import Job, JobStatus
-from api.schemas.job import JobHistoryItem, JobStatusResponse, PatchJobForm, StartJobForm, StartJobResponse
+from api.schemas.job import BatchJobItem, JobHistoryItem, JobStatusResponse, PatchJobForm, StartJobForm, StartJobResponse
 from api.secrets.impl import secret_storage
 from api.util.aes_gcm import derive_key, encrypt_token
 from api.util.secrets_bundle import build_secret_bundle
@@ -153,11 +153,15 @@ async def start_job(
 ) -> StartJobResponse:
     await _require_no_active_job(session=session, user_id=token.user_id)
     _require_allowed_provider(form.provider)
-    _require_allowed_model(form.model, form.provider)
     _require_allowed_effort(form.effort)
 
+    if not form.models:
+        raise HTTPException(status_code=412, detail='At least one model is required')
+
+    for model in form.models:
+        _require_allowed_model(model, form.provider)
+
     use_proxy_static = settings.BACKEND_USE_PROXY_STATIC_KEY
-    # Force proxy mode for OpenRouter (we need to route to different base URL)
     use_proxy_tokens = settings.BACKEND_OAI_KEY_MODE == 'proxy' or form.provider == 'openrouter'
     openai_key = _resolve_openai_key(form)
 
@@ -166,10 +170,7 @@ async def start_job(
 
     await _maybe_validate_user_key(form=form, openai_key=openai_key)
 
-    job_id = uuid.uuid4()
-    secret_ref = os.urandom(32).hex()
-    result_token = os.urandom(32).hex()
-
+    batch_id = uuid.uuid4()
     openai_token, key_mode = _encode_openai_token(
         openai_key=openai_key or '',
         use_proxy_static=use_proxy_static,
@@ -178,41 +179,84 @@ async def start_job(
 
     try:
         bundle = build_secret_bundle(upload=form.file, openai_token=openai_token, key_mode=key_mode, provider=form.provider, effort=form.effort)
-        await secret_storage.save_secret(secret_ref, bundle)
 
-        job = Job(
-            id=job_id,
-            status=JobStatus.queued,
-            user_id=token.user_id,
-            secret_ref=secret_ref,
-            result_token=result_token,
-            model=form.model,
-            effort=form.effort,
-            file_name=(form.file.filename or 'files.zip')[:128],
-        )
-        session.add(job)
+        jobs: list[Job] = []
+        secret_refs: list[str] = []
+
+        for model in form.models:
+            job_id = uuid.uuid4()
+            secret_ref = os.urandom(32).hex()
+            result_token = os.urandom(32).hex()
+
+            await secret_storage.save_secret(secret_ref, bundle)
+            secret_refs.append(secret_ref)
+
+            job = Job(
+                id=job_id,
+                batch_id=batch_id,
+                status=JobStatus.queued,
+                user_id=token.user_id,
+                secret_ref=secret_ref,
+                result_token=result_token,
+                model=model,
+                effort=form.effort,
+                file_name=(form.file.filename or 'files.zip')[:128],
+            )
+            session.add(job)
+            jobs.append(job)
 
         await session.commit()
+
         try:
-            await publisher.publish_job_start(
-                job_id=str(job_id),
-                secret_ref=secret_ref,
-                model=form.model,
-                result_token=result_token,
-            )
+            for job in jobs:
+                await publisher.publish_job_start(
+                    job_id=str(job.id),
+                    secret_ref=job.secret_ref or '',
+                    model=job.model,
+                    result_token=job.result_token or '',
+                )
         except Exception as err:
-            with suppress(Exception):
-                await secret_storage.delete_secret(secret_ref)
-            await session.delete(job)
+            for secret_ref in secret_refs:
+                with suppress(Exception):
+                    await secret_storage.delete_secret(secret_ref)
+            for job in jobs:
+                await session.delete(job)
             await session.commit()
             raise HTTPException(
                 status_code=502,
-                detail='Failed to enqueue job',
+                detail='Failed to enqueue jobs',
             ) from err
 
-        return StartJobResponse(job_id=job_id, status=job.status)
+        return StartJobResponse(
+            batch_id=batch_id,
+            jobs=[BatchJobItem.model_validate(job) for job in jobs],
+        )
     finally:
         await form.file.close()
+
+
+@router.get('/batch/{batch_id}')
+async def get_batch(
+    batch_id: uuid.UUID,
+    session: DbSessionDep,
+    token: OptionalTokenDep,
+) -> list[JobStatusResponse]:
+    stmt = select(Job).where(Job.batch_id == batch_id).order_by(Job.model)
+    jobs_result = await session.scalars(stmt)
+    jobs = jobs_result.all()
+    if not jobs:
+        raise HTTPException(status_code=404, detail='Batch not found')
+
+    first_job = jobs[0]
+    if not first_job.public and ((not token) or (auth_backend and first_job.user_id != token.user_id)):
+        raise HTTPException(status_code=404, detail='Batch not found')
+
+    responses = []
+    for job in jobs:
+        response = JobStatusResponse.model_validate(job)
+        response.queue_position = await _queue_position(session, job)
+        responses.append(response)
+    return responses
 
 
 @router.get('/history')

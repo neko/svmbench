@@ -383,6 +383,9 @@ export default function ResultsClient() {
     }
   }, [job, setJob])
 
+  // Skip the file requirement gate for public audits
+  const isPublicAudit = job?.public === true
+
   const emptyState = useMemo(() => {
     if (isRunComplete && !files) {
       // For public audits, show a simple message instead of file uploader
@@ -445,8 +448,6 @@ export default function ResultsClient() {
     isPublicAudit,
   ])
 
-  // Skip the file requirement gate for public audits
-  const isPublicAudit = job?.public === true
   const shouldGateResults = isRunComplete && !files && !isPublicAudit
   const statusError = jobError || job?.error
 

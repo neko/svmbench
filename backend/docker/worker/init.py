@@ -25,7 +25,6 @@ RESULTSVC_HOST = os.getenv('RESULTSVC_HOST', '')
 RESULTSVC_PORT = os.getenv('RESULTSVC_PORT', '8083')
 RESULTSVC_JOB_TOKEN = os.getenv('RESULTSVC_JOB_TOKEN', '')
 OAI_PROXY_BASE_URL = os.getenv('OAI_PROXY_BASE_URL', '').strip()
-OAI_PROXY_WIRE_API = os.getenv('OAI_PROXY_WIRE_API', 'responses').strip()
 
 AGENT_DIR = Path(os.getenv('AGENT_DIR') or str(Path.home()))
 AUDIT_DIR = Path(os.getenv('AUDIT_DIR') or str(AGENT_DIR / 'audit'))
@@ -66,6 +65,9 @@ def _write_codex_proxy_config(*, home: Path, provider: str = 'openai') -> None:
     # e.g. http://oai.loc:8084/provider/openrouter/v1
     base_url_with_provider = base_url.replace('/v1', f'/provider/{provider}/v1')
 
+    # OpenRouter doesn't fully support Responses API for tool calls - use chat_completions
+    wire_api = 'chat_completions' if provider == 'openrouter' else 'responses'
+
     config_dir = home / '.codex'
     config_dir.mkdir(parents=True, exist_ok=True)
     config_path = config_dir / 'config.toml'
@@ -74,7 +76,7 @@ def _write_codex_proxy_config(*, home: Path, provider: str = 'openai') -> None:
         '[model_providers.proxy]\n'
         'name = "proxy"\n'
         f'base_url = "{base_url_with_provider}"\n'
-        f'wire_api = "{OAI_PROXY_WIRE_API}"\n'
+        f'wire_api = "{wire_api}"\n'
         'env_key = "OPENAI_API_KEY"\n'
     )
     config_path.write_text(config, encoding='utf-8')

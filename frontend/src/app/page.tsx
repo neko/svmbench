@@ -33,15 +33,16 @@ const OPENAI_MODELS = [
 ]
 
 const OPENROUTER_MODELS = [
+  { value: "minimax/minimax-m2.5", label: "minimax/minimax-m2.5" },
+  { value: "moonshotai/kimi-k2.5", label: "moonshotai/kimi-k2.5" },
+  { value: "z-ai/glm-5", label: "z-ai/glm-5" },
+  { value: "google/gemini-3-flash-preview", label: "google/gemini-3-flash-preview" },
+  { value: "deepseek/deepseek-v3.2", label: "deepseek/deepseek-v3.2" },
+  { value: "anthropic/claude-opus-4.6", label: "anthropic/claude-opus-4.6" },
+  { value: "anthropic/claude-opus-4.5", label: "anthropic/claude-opus-4.5" },
+  { value: "x-ai/grok-4.1-fast", label: "x-ai/grok-4.1-fast" },
   { value: "openai/gpt-5.2-codex", label: "openai/gpt-5.2-codex" },
   { value: "openai/gpt-5.1-codex-max", label: "openai/gpt-5.1-codex-max" },
-  { value: "openai/gpt-5.2", label: "openai/gpt-5.2" },
-  { value: "anthropic/claude-opus-4-5", label: "anthropic/claude-opus-4-5" },
-  { value: "anthropic/claude-sonnet-4-5", label: "anthropic/claude-sonnet-4-5" },
-  { value: "google/gemini-2.5-pro", label: "google/gemini-2.5-pro" },
-  { value: "google/gemini-2.5-flash", label: "google/gemini-2.5-flash" },
-  { value: "deepseek/deepseek-r1", label: "deepseek/deepseek-r1" },
-  { value: "deepseek/deepseek-chat", label: "deepseek/deepseek-chat" },
 ]
 
 export default function Page() {

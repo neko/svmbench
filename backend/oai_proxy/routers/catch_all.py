@@ -91,10 +91,28 @@ def _filter_headers(items: Iterable[tuple[str, str]]) -> dict[str, str]:
     return headers
 
 
-def _get_provider_base_url(request: Request) -> str:
-    """Get the base URL for the provider from query params."""
+def _get_provider_from_request(request: Request, path: str) -> tuple[str, str]:
+    """Extract provider from path prefix or query params.
+
+    Supports both:
+      /provider/openrouter/v1/responses  (path-based, preferred)
+      /v1/responses?provider=openrouter  (query-based, legacy)
+
+    Returns (provider_base_url, cleaned_path).
+    """
+    # Check path-based provider first: /provider/<name>/...
+    if path.startswith('provider/'):
+        parts = path.split('/', 2)
+        if len(parts) >= 2:
+            provider = parts[1].lower()
+            cleaned_path = parts[2] if len(parts) > 2 else ''
+            base_url = PROVIDER_BASE_URLS.get(provider, PROVIDER_BASE_URLS[DEFAULT_PROVIDER])
+            return base_url, cleaned_path
+
+    # Fall back to query param
     provider = request.query_params.get('provider', DEFAULT_PROVIDER).lower()
-    return PROVIDER_BASE_URLS.get(provider, PROVIDER_BASE_URLS[DEFAULT_PROVIDER])
+    base_url = PROVIDER_BASE_URLS.get(provider, PROVIDER_BASE_URLS[DEFAULT_PROVIDER])
+    return base_url, path
 
 
 def _filter_query_params(params: dict) -> dict:
@@ -105,7 +123,7 @@ def _filter_query_params(params: dict) -> dict:
 async def _proxy_request(request: Request, path: str) -> StreamingResponse:
     token = _get_authorization_token(request)
     openai_key = _resolve_openai_key(token)
-    base_url = _get_provider_base_url(request)
+    base_url, cleaned_path = _get_provider_from_request(request, path)
     forward_headers = _filter_headers(request.headers.items())
     forward_headers['authorization'] = f'Bearer {openai_key}'
 
@@ -114,7 +132,7 @@ async def _proxy_request(request: Request, path: str) -> StreamingResponse:
         forward_headers['http-referer'] = 'https://svmbench.io'
         forward_headers['x-title'] = 'svmbench'
 
-    target_path = path.lstrip('/')
+    target_path = cleaned_path.lstrip('/')
     encoded_path = quote(target_path, safe='/')
     target_url = f'{base_url}/{encoded_path}' if encoded_path else base_url
 

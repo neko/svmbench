@@ -122,6 +122,7 @@ export function FileUploader({
   onClear,
 }: FileUploaderProps) {
   const inputRef = useRef<HTMLInputElement>(null)
+  const zipInputRef = useRef<HTMLInputElement>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set())
 
@@ -150,6 +151,11 @@ export function FileUploader({
   const triggerInput = useCallback(() => {
     if (disabled) return
     inputRef.current?.click()
+  }, [disabled])
+
+  const triggerZipInput = useCallback(() => {
+    if (disabled) return
+    zipInputRef.current?.click()
   }, [disabled])
 
   const handleFiles = useCallback(
@@ -342,7 +348,10 @@ export function FileUploader({
               DRAG A FOLDER OR ZIP
             </span>
             <span className="text-xs text-muted-foreground/70">
-              or click to select a folder
+              or click to select a{" "}
+              <span className="underline" onClick={(e) => { e.stopPropagation(); triggerInput() }}>folder</span>
+              {" / "}
+              <span className="underline" onClick={(e) => { e.stopPropagation(); triggerZipInput() }}>.zip</span>
             </span>
           </div>
         </button>
@@ -358,6 +367,13 @@ export function FileUploader({
           webkitdirectory: "",
           directory: "",
         } as React.InputHTMLAttributes<HTMLInputElement>)}
+      />
+      <input
+        ref={zipInputRef}
+        type="file"
+        className="hidden"
+        accept=".zip,application/zip,application/x-zip-compressed"
+        onChange={handleInputChange}
       />
     </div>
   )

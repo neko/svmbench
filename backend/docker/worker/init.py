@@ -56,8 +56,9 @@ def _write_codex_proxy_config(*, home: Path, provider: str = 'openai') -> None:
     if not base_url.endswith('/v1'):
         base_url = f'{base_url}/v1'
 
-    # Add provider as query param so proxy knows where to route
-    base_url_with_provider = f'{base_url}?provider={provider}'
+    # Embed provider in the path so Codex doesn't mangle query params
+    # e.g. http://oai.loc:8084/provider/openrouter/v1
+    base_url_with_provider = base_url.replace('/v1', f'/provider/{provider}/v1')
 
     config_dir = home / '.codex'
     config_dir.mkdir(parents=True, exist_ok=True)
@@ -111,10 +112,52 @@ def _extract_fenced_json(text: str) -> str:
     start = text.find('\n', start)
     if start == -1:
         return text
-    end = text.find('```', start + 1)
-    if end == -1:
+    # Find the *last* ``` to handle code blocks inside JSON string values.
+    end = text.rfind('```')
+    if end == -1 or end <= start:
         return text
     return text[start + 1 : end].strip()
+
+
+def _repair_json(json_text: str) -> str:
+    """Attempt to repair truncated/malformed JSON from the agent.
+
+    Common issues:
+    - Unterminated strings (agent put multi-line code in a JSON string value)
+    - Missing closing brackets/braces
+    """
+    # Try parsing as-is first.
+    try:
+        json.loads(json_text)
+        return json_text
+    except json.JSONDecodeError:
+        pass
+
+    # Strategy: find the last successfully parsed vulnerability and truncate.
+    # Look for complete vulnerability objects by finding '}' that close them.
+    import re
+
+    # Find the outermost structure
+    vulns_start = json_text.find('"vulnerabilities"')
+    if vulns_start == -1:
+        return json_text
+
+    # Try progressively truncating from the end to find valid JSON.
+    # Look for positions where we can close the array and object.
+    # Find all positions of '}\n    }' or similar vulnerability-closing patterns.
+    close_positions = [m.end() for m in re.finditer(r'\}\s*(?=,\s*\{|\s*\])', json_text)]
+
+    for pos in reversed(close_positions):
+        # Try closing the JSON at this vulnerability boundary.
+        candidate = json_text[:pos] + '\n  ]\n}'
+        try:
+            payload = json.loads(candidate)
+            if isinstance(payload.get('vulnerabilities'), list) and payload['vulnerabilities']:
+                return candidate
+        except json.JSONDecodeError:
+            continue
+
+    return json_text
 
 
 def _validate_report_payload(payload: object) -> dict:
@@ -155,6 +198,10 @@ def _extract_json_payload(audit_md: str) -> dict:
 
     # Prefer fenced JSON block; fall back to raw text.
     json_text = _extract_fenced_json(text)
+
+    # Attempt repair if JSON is malformed (e.g. code blocks in string values).
+    json_text = _repair_json(json_text)
+
     try:
         payload = json.loads(json_text)
     except json.JSONDecodeError as err:

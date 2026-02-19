@@ -1,3 +1,5 @@
+import JSZip from "jszip"
+
 import {
   createIgnore,
   createIgnoreFromGitignore,
@@ -21,6 +23,48 @@ function getRootFolder(path: string): string | null {
   return parts.length > 1 ? parts[0] : null
 }
 
+function isZipFile(file: File): boolean {
+  return (
+    file.type === "application/zip" ||
+    file.type === "application/x-zip-compressed" ||
+    file.name.toLowerCase().endsWith(".zip")
+  )
+}
+
+async function readFilesFromZip(
+  file: File,
+): Promise<{ rootFolder: string | null; fileData: FileData[] }> {
+  const zip = await JSZip.loadAsync(file)
+  const fileData: FileData[] = []
+  const paths: string[] = []
+
+  const ig = createIgnore(DEFAULT_IGNORE_PATTERNS)
+
+  for (const [path, entry] of Object.entries(zip.files)) {
+    if (entry.dir) continue
+    paths.push(path)
+  }
+
+  const firstPath = paths[0] ?? ""
+  const rootFolder = getRootFolder(firstPath)
+
+  for (const [path, entry] of Object.entries(zip.files)) {
+    if (entry.dir) continue
+    let relativePath = path
+    if (rootFolder && relativePath.startsWith(`${rootFolder}/`)) {
+      relativePath = relativePath.slice(rootFolder.length + 1)
+    }
+    if (!relativePath || ig.ignores(relativePath)) continue
+    try {
+      const content = await entry.async("string")
+      if (content.includes("\0")) continue
+      fileData.push({ path: relativePath, content, size: content.length })
+    } catch {}
+  }
+
+  return { rootFolder: rootFolder ?? file.name.replace(/\.zip$/i, ""), fileData }
+}
+
 async function buildIgnore(
   files: File[],
 ): Promise<ReturnType<typeof createIgnore>> {
@@ -40,6 +84,11 @@ async function buildIgnore(
 export async function readFilesFromInput(
   files: File[],
 ): Promise<{ rootFolder: string | null; fileData: FileData[] }> {
+  // handle single zip file upload
+  if (files.length === 1 && isZipFile(files[0])) {
+    return readFilesFromZip(files[0])
+  }
+
   const fileData: FileData[] = []
   const ig = await buildIgnore(files)
   const firstPath = files[0] ? getFilePath(files[0] as FileWithPath) : ""

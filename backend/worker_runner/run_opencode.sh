@@ -13,18 +13,37 @@ AUDIT_TIMEOUT="${AUDIT_TIMEOUT:-900}"
 
 mkdir -p "${SUBMISSION_DIR}" "${LOGS_DIR}"
 
-# Use OpenRouter via OpenAI-compatible interface
-# OpenRouter is OpenAI-compatible, so we use openai provider with custom base URL
-export OPENAI_API_KEY="${OPENROUTER_API_KEY}"
-export OPENAI_BASE_URL="https://openrouter.ai/api/v1"
+# Configure OpenCode with custom provider using OpenAI SDK pointing to OpenRouter
+CONFIG_DIR="${AGENT_DIR}/.opencode"
+mkdir -p "${CONFIG_DIR}"
+
+cat > "${CONFIG_DIR}/config.json" << EOF
+{
+  "\$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "openrouter": {
+      "npm": "@ai-sdk/openai",
+      "name": "OpenRouter",
+      "options": {
+        "apiKey": "${OPENROUTER_API_KEY}",
+        "baseURL": "https://openrouter.ai/api/v1"
+      },
+      "models": {
+        "audit": {
+          "id": "${OPENCODE_MODEL}"
+        }
+      }
+    }
+  }
+}
+EOF
 
 rm -f "${SUBMISSION_DIR}/audit.md"
 cd "${AGENT_DIR}"
 
-# Run OpenCode with the run subcommand
-# Use openai provider since OpenRouter is OpenAI-compatible
+# Run OpenCode - use "audit" alias which maps to the actual model
 timeout --signal=TERM --kill-after=30s "${AUDIT_TIMEOUT}s" \
-  opencode run -m "openai/${OPENCODE_MODEL}" "Follow the instructions in AGENTS.md to audit the code in audit/ and write results to submission/audit.md" \
+  opencode run -m "openrouter/audit" "Follow the instructions in AGENTS.md to audit the code in audit/ and write results to submission/audit.md" \
   > "${LOGS_DIR}/opencode.log" 2>&1 || true
 
 if [[ ! -s "${SUBMISSION_DIR}/audit.md" ]]; then

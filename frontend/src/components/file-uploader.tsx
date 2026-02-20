@@ -251,65 +251,19 @@ export function FileUploader({
     onClear?.()
   }, [onClear])
 
-  return (
-    <div className="w-full space-y-3">
-      {/* Mode toggle */}
-      <div className="flex gap-1 rounded-lg bg-muted/30 p-1">
-        <button
-          type="button"
-          onClick={() => onInputModeChange("files")}
-          disabled={disabled}
-          className={cn(
-            "flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-            inputMode === "files"
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground",
-            disabled && "opacity-50 cursor-not-allowed"
-          )}
-        >
-          <HugeiconsIcon icon={FolderAddIcon} strokeWidth={2} className="mr-1.5 inline-block size-3.5" />
-          Files / Zip
-        </button>
-        <button
-          type="button"
-          onClick={() => onInputModeChange("url")}
-          disabled={disabled}
-          className={cn(
-            "flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-            inputMode === "url"
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground",
-            disabled && "opacity-50 cursor-not-allowed"
-          )}
-        >
-          <HugeiconsIcon icon={Link01Icon} strokeWidth={2} className="mr-1.5 inline-block size-3.5" />
-          URL
-        </button>
-      </div>
+  const [showUrlInput, setShowUrlInput] = useState(false)
 
-      {/* URL input mode */}
-      {inputMode === "url" ? (
-        <div className="flex h-64 flex-col items-center justify-center gap-4 rounded-2xl border border-dashed border-border bg-muted/20 px-6 py-8">
-          <HugeiconsIcon
-            icon={Link01Icon}
-            strokeWidth={1.5}
-            className="size-6 text-muted-foreground"
-          />
-          <div className="w-full max-w-sm space-y-2">
-            <Input
-              type="url"
-              placeholder="https://github.com/user/repo or zip URL..."
-              value={sourceUrl ?? ""}
-              onChange={(e) => onSourceUrlChange?.(e.target.value)}
-              disabled={disabled}
-              className="text-center"
-            />
-            <p className="text-center text-xs text-muted-foreground">
-              GitHub repo, zip download link, or any URL to source code
-            </p>
-          </div>
-        </div>
-      ) : hasFiles ? (
+  // If URL is set, switch to URL mode automatically
+  useEffect(() => {
+    if (sourceUrl && sourceUrl.trim().length > 0) {
+      onInputModeChange("url")
+    }
+  }, [sourceUrl, onInputModeChange])
+
+  return (
+    <div className="w-full space-y-2">
+      {/* File upload area (always visible when no files/url) */}
+      {hasFiles ? (
         <section
           aria-label="Uploaded files"
           onDrop={handleDrop}
@@ -390,6 +344,42 @@ export function FileUploader({
             </ScrollArea>
           </div>
         </section>
+      ) : inputMode === "url" && sourceUrl ? (
+        // URL mode - show entered URL
+        <div
+          className={cn(
+            "flex h-64 flex-col items-center justify-center gap-4 rounded-2xl border border-dashed border-border bg-muted/20 px-6 py-8",
+            disabled && "opacity-60",
+          )}
+        >
+          <HugeiconsIcon
+            icon={Link01Icon}
+            strokeWidth={1.5}
+            className="size-6 text-muted-foreground"
+          />
+          <div className="w-full max-w-sm space-y-2">
+            <Input
+              type="url"
+              placeholder="https://github.com/user/repo or zip URL..."
+              value={sourceUrl ?? ""}
+              onChange={(e) => onSourceUrlChange?.(e.target.value)}
+              disabled={disabled}
+              className="text-center"
+            />
+            <div className="flex items-center justify-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  onSourceUrlChange?.("")
+                  onInputModeChange("files")
+                }}
+                className="text-xs text-muted-foreground hover:text-foreground underline"
+              >
+                or upload files instead
+              </button>
+            </div>
+          </div>
+        </div>
       ) : (
         <button
           type="button"
@@ -422,6 +412,42 @@ export function FileUploader({
             </span>
           </div>
         </button>
+      )}
+
+      {/* "or paste a link" - shows URL input on hover/focus */}
+      {!hasFiles && inputMode !== "url" && (
+        <div
+          className="group relative"
+          onMouseEnter={() => setShowUrlInput(true)}
+          onMouseLeave={() => !sourceUrl && setShowUrlInput(false)}
+        >
+          {showUrlInput ? (
+            <div className="flex items-center gap-2">
+              <Input
+                type="url"
+                placeholder="https://github.com/user/repo..."
+                value={sourceUrl ?? ""}
+                onChange={(e) => {
+                  onSourceUrlChange?.(e.target.value)
+                  if (e.target.value.trim()) {
+                    onInputModeChange("url")
+                  }
+                }}
+                disabled={disabled}
+                className="text-xs h-8"
+                autoFocus
+              />
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowUrlInput(true)}
+              className="w-full text-center text-xs text-muted-foreground/70 hover:text-muted-foreground transition-colors py-1"
+            >
+              or paste a link
+            </button>
+          )}
+        </div>
       )}
 
       <input

@@ -31,8 +31,26 @@ STATIC_KEY_MARKER = 'STATIC'
 # Marker token that triggers x402 paid mode
 X402_MARKER = 'X402'
 
-# x402 model endpoint mapping
+# x402 model endpoint mapping (model ID -> endpoint path)
 X402_MODEL_ENDPOINTS = {
+    # x402 native model IDs (llm-* format)
+    'llm-gpt-5.2-codex': 'llm/gpt-5.2-codex',
+    'llm-gpt-5.2': 'llm/gpt-5.2',
+    'llm-claude-opus': 'llm/claude-opus',
+    'llm-claude-sonnet': 'llm/claude-sonnet',
+    'llm-claude-haiku': 'llm/claude-haiku',
+    'llm-deepseek': 'llm/deepseek-v3',
+    'llm-deepseek-r1': 'llm/deepseek-r1',
+    'llm-gemini-pro': 'llm/gemini-pro',
+    'llm-gemini-flash': 'llm/gemini-flash',
+    'llm-grok': 'llm/grok',
+    'llm-kimi': 'llm/kimi',
+    'llm-minimax': 'llm/minimax',
+    'llm-glm': 'llm/glm',
+    'llm-llama': 'llm/llama',
+    'llm-qwen': 'llm/qwen',
+    'llm-mistral': 'llm/mistral',
+    # Legacy OpenAI/Anthropic-style model IDs
     'gpt-5.2-codex': 'llm/gpt-5.2-codex',
     'gpt-5.2-2025-12-11': 'llm/gpt-5.2-codex',
     'codex-gpt-5.2': 'llm/gpt-5.2-codex',
@@ -130,7 +148,10 @@ def _get_x402_endpoint_for_model(model: str) -> str:
         return f"{settings.X402_GATEWAY_URL}/api/{endpoint}"
 
     # Fallback: try to construct from model name
+    # Strip llm- prefix if present to avoid llm/llm-xxx
     clean_model = model.replace('/', '-').replace('_', '-')
+    if clean_model.startswith('llm-'):
+        clean_model = clean_model[4:]  # Remove 'llm-' prefix
     return f"{settings.X402_GATEWAY_URL}/api/llm/{clean_model}"
 
 

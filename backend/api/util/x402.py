@@ -27,8 +27,26 @@ from api.core.config import settings
 
 X402_GATEWAY_URL = settings.X402_GATEWAY_URL
 
-# Model ID mapping for x402 endpoints
+# Model ID mapping for x402 endpoints (model ID -> endpoint path)
 X402_MODEL_ENDPOINTS = {
+    # x402 native model IDs (llm-* format)
+    'llm-gpt-5.2-codex': 'llm/gpt-5.2-codex',
+    'llm-gpt-5.2': 'llm/gpt-5.2',
+    'llm-claude-opus': 'llm/claude-opus',
+    'llm-claude-sonnet': 'llm/claude-sonnet',
+    'llm-claude-haiku': 'llm/claude-haiku',
+    'llm-deepseek': 'llm/deepseek-v3',
+    'llm-deepseek-r1': 'llm/deepseek-r1',
+    'llm-gemini-pro': 'llm/gemini-pro',
+    'llm-gemini-flash': 'llm/gemini-flash',
+    'llm-grok': 'llm/grok',
+    'llm-kimi': 'llm/kimi',
+    'llm-minimax': 'llm/minimax',
+    'llm-glm': 'llm/glm',
+    'llm-llama': 'llm/llama',
+    'llm-qwen': 'llm/qwen',
+    'llm-mistral': 'llm/mistral',
+    # Legacy OpenAI/Anthropic-style model IDs
     'gpt-5.2-codex': 'llm/gpt-5.2-codex',
     'codex-gpt-5.2': 'llm/gpt-5.2-codex',
     'claude-opus-4-6': 'llm/claude-opus',
@@ -92,7 +110,10 @@ class X402Client:
             return f'{self.gateway_url}/api/{endpoint}'
 
         # Fallback: try to construct from model name
+        # Strip llm- prefix if present to avoid llm/llm-xxx
         clean_model = model.replace('/', '-').replace('_', '-')
+        if clean_model.startswith('llm-'):
+            clean_model = clean_model[4:]  # Remove 'llm-' prefix
         return f'{self.gateway_url}/api/llm/{clean_model}'
 
     async def _parse_402_response(

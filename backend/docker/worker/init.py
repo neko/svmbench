@@ -39,12 +39,8 @@ RUNNER_DIR = Path(os.getenv('SVM_BENCH_RUNNER_DIR') or '/opt/svmbench/worker_run
 OPENCODE_RUNNER_SH = RUNNER_DIR / 'run_opencode.sh'
 AGENTS_MD = RUNNER_DIR / 'AGENTS.md'
 
-# Effort-based timeouts (seconds)
-EFFORT_TIMEOUTS = {
-    'low': 180,
-    'medium': 480,
-    'high': 900,
-}
+# Fixed timeout (always max effort)
+AUDIT_TIMEOUT = 900
 
 
 def _validate_report(payload: object) -> dict:
@@ -107,8 +103,7 @@ def _run_audit(*, x402_key: str, model: str, effort: str) -> Path:
     env['SUBMISSION_DIR'] = str(SUBMISSION_DIR)
     env['LOGS_DIR'] = str(LOGS_DIR)
 
-    timeout = EFFORT_TIMEOUTS.get(effort, EFFORT_TIMEOUTS['medium'])
-    env['AUDIT_TIMEOUT'] = str(timeout)
+    env['AUDIT_TIMEOUT'] = str(AUDIT_TIMEOUT)
 
     # Copy AGENTS.md instructions
     if AGENTS_MD.exists():
@@ -117,7 +112,7 @@ def _run_audit(*, x402_key: str, model: str, effort: str) -> Path:
     if not OPENCODE_RUNNER_SH.exists():
         raise RuntimeError(f'Missing runner: {OPENCODE_RUNNER_SH}')
 
-    logger.info(f'Running audit: model={model}, effort={effort}, timeout={timeout}s')
+    logger.info(f'Running audit: model={model}, timeout={AUDIT_TIMEOUT}s')
 
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     SUBMISSION_DIR.mkdir(parents=True, exist_ok=True)

@@ -31,39 +31,25 @@ export default function Page() {
   const router = useRouter()
   const { inputMode, files, packageName, sourceUrl, setInputMode, setUpload, setSourceUrl, clearUpload } = useUploadStore()
   const [selectedModel, setSelectedModel] = useState<string>("")
-  const [effort, setEffort] = useState<"low" | "medium" | "high">("medium")
   const [models, setModels] = useState<ModelInfo[]>([])
   const [modelsLoading, setModelsLoading] = useState(true)
 
-  // Fetch models from API on mount
   useEffect(() => {
     fetchPaymentConfig()
       .then((config) => {
         setModels(config.models)
-        // Set default selection to first model if none selected
         if (config.models.length > 0 && !selectedModel) {
           setSelectedModel(config.models[0].id)
         }
       })
-      .catch((err) => {
-        console.error("Failed to fetch models:", err)
-      })
-      .finally(() => {
-        setModelsLoading(false)
-      })
+      .catch((err) => console.error("Failed to fetch models:", err))
+      .finally(() => setModelsLoading(false))
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
-  const [recentJobs, setRecentJobs] = useLocalStorage<RecentJob[]>(
-    "svmbench.recentJobs.v1",
-    [],
-  )
-  const {
-    isAuthorized,
-    isLoading: isAuthLoading,
-    isConfigLoading,
-  } = useAuth()
+  const [recentJobs, setRecentJobs] = useLocalStorage<RecentJob[]>("svmbench.recentJobs.v1", [])
+  const { isAuthorized, isLoading: isAuthLoading, isConfigLoading } = useAuth()
   const { paymentToken, setPaymentToken, clearPaymentToken } = usePaymentMode()
 
   const fileCount = files?.length ?? 0
@@ -73,22 +59,15 @@ export default function Page() {
     return null
   }, [files, packageName])
 
-  // Convert models to select format
-  const modelOptions = useMemo(() =>
-    models.map((m) => ({ value: m.id, label: m.name })),
-    [models]
-  )
+  const modelOptions = useMemo(() => models.map((m) => ({ value: m.id, label: m.name })), [models])
 
   const hasValidInput = inputMode === "url"
     ? !!sourceUrl && sourceUrl.trim().length > 0
     : !!files && fileCount > 0
 
-  const handleFilesSelected = useCallback(
-    (selected: File[]) => {
-      setUpload(selected, inferPackageName(selected))
-    },
-    [setUpload],
-  )
+  const handleFilesSelected = useCallback((selected: File[]) => {
+    setUpload(selected, inferPackageName(selected))
+  }, [setUpload])
 
   const handleSubmit = useCallback(async (directToken?: string) => {
     if (!isAuthorized) {
@@ -115,11 +94,11 @@ export default function Page() {
 
       if (inputMode === "url" && sourceUrl) {
         name = extractNameFromUrl(sourceUrl)
-        response = await startJobFromUrl(sourceUrl, selectedModel, effort, token)
+        response = await startJobFromUrl(sourceUrl, selectedModel, "high", token)
       } else if (files && fileCount > 0) {
         name = selectedLabel ?? "files"
         const zipFile = await createZipFromFiles(files, name)
-        response = await startJob(zipFile, selectedModel, effort, token)
+        response = await startJob(zipFile, selectedModel, "high", token)
       } else {
         setSubmitError("Please provide files or a URL")
         return
@@ -139,34 +118,18 @@ export default function Page() {
     } finally {
       setIsSubmitting(false)
     }
-  }, [
-    isAuthorized,
-    selectedModel,
-    paymentToken,
-    inputMode,
-    sourceUrl,
-    files,
-    fileCount,
-    selectedLabel,
-    effort,
-    clearPaymentToken,
-    setRecentJobs,
-    router,
-  ])
+  }, [isAuthorized, selectedModel, paymentToken, inputMode, sourceUrl, files, fileCount, selectedLabel, clearPaymentToken, setRecentJobs, router])
 
   const extractNameFromUrl = (url: string): string => {
     try {
       const parsed = new URL(url)
       if (parsed.hostname === "github.com") {
         const parts = parsed.pathname.split("/").filter(Boolean)
-        if (parts.length >= 2) {
-          return parts[1]
-        }
+        if (parts.length >= 2) return parts[1]
       }
       const pathParts = parsed.pathname.split("/").filter(Boolean)
       if (pathParts.length > 0) {
-        const lastPart = pathParts[pathParts.length - 1]
-        return lastPart.replace(/\.zip$/i, "")
+        return pathParts[pathParts.length - 1].replace(/\.zip$/i, "")
       }
       return parsed.hostname
     } catch {
@@ -183,32 +146,22 @@ export default function Page() {
             <div className="space-y-6 lg:col-span-3">
               <div>
                 <div className="-ms-2 mb-3 flex items-center gap-2">
-                  <video
-                    autoPlay
-                    loop
-                    muted
-                    playsInline
-                    className="size-16 rounded-lg"
-                  >
+                  <video autoPlay loop muted playsInline className="size-16 rounded-lg">
                     <source src="/dance.webm" type="video/webm" />
                   </video>
                 </div>
-                <h1 className="text-5xl leading-[1.1] font-serif text-foreground mb-1.5">
-                  svmbench
-                </h1>
+                <h1 className="text-5xl leading-[1.1] font-serif text-foreground mb-1.5">svmbench</h1>
                 <h2 className="text-2xl leading-[1.1] font-serif text-foreground mb-3">
                   evaluating ai performance on high-severity solana program findings
                 </h2>
                 <div className="space-y-2 text-base text-foreground/80">
                   <p className="leading-tight">
-                    svmbench is an open benchmark that evaluates whether ai
-                    agents can detect, patch, and exploit high-severity
-                    vulnerabilities in solana programs.
+                    svmbench is an open benchmark that evaluates whether ai agents can detect, patch, and exploit
+                    high-severity vulnerabilities in solana programs.
                   </p>
                   <p className="leading-tight">
-                    this interface focuses on detection and only reports
-                    high-severity findings. upload a program folder, connect your
-                    wallet, and start a run.
+                    this interface focuses on detection and only reports high-severity findings. upload a program
+                    folder, connect your wallet, and start a run.
                   </p>
                   <div className="flex flex-col items-start gap-0.5">
                     <a
@@ -218,33 +171,21 @@ export default function Page() {
                       className="inline-flex items-center gap-0.5 font-serif leading-tight underline-offset-4 hover:text-foreground hover:underline"
                     >
                       repo
-                      <HugeiconsIcon
-                        icon={ArrowUpRight01Icon}
-                        strokeWidth={2}
-                        className="size-3.5"
-                      />
+                      <HugeiconsIcon icon={ArrowUpRight01Icon} strokeWidth={2} className="size-3.5" />
                     </a>
                     <Link
                       href="/leaderboard"
                       className="inline-flex items-center gap-0.5 font-serif leading-tight underline-offset-4 hover:text-foreground hover:underline"
                     >
                       leaderboard
-                      <HugeiconsIcon
-                        icon={ArrowUpRight01Icon}
-                        strokeWidth={2}
-                        className="size-3.5"
-                      />
+                      <HugeiconsIcon icon={ArrowUpRight01Icon} strokeWidth={2} className="size-3.5" />
                     </Link>
                     <Link
                       href="/results?job_id=628dc527-3711-47ce-8cc3-63703c33ebf6"
                       className="inline-flex items-center gap-0.5 font-serif leading-tight underline-offset-4 hover:text-foreground hover:underline"
                     >
                       example audit
-                      <HugeiconsIcon
-                        icon={ArrowUpRight01Icon}
-                        strokeWidth={2}
-                        className="size-3.5"
-                      />
+                      <HugeiconsIcon icon={ArrowUpRight01Icon} strokeWidth={2} className="size-3.5" />
                     </Link>
                   </div>
                 </div>
@@ -267,45 +208,22 @@ export default function Page() {
 
               <div className="grid gap-3 text-xs text-muted-foreground">
                 <div className="grid gap-1">
-                  <Label htmlFor="model-select" className="text-xs text-foreground">
-                    Model
-                  </Label>
+                  <Label htmlFor="model-select" className="text-xs text-foreground">Model</Label>
                   <Select value={selectedModel} onValueChange={setSelectedModel}>
                     <SelectTrigger id="model-select" className="w-full">
                       <SelectValue placeholder={modelsLoading ? "Loading..." : "Select model"} />
                     </SelectTrigger>
                     <SelectContent>
                       {modelOptions.map((m) => (
-                        <SelectItem key={m.value} value={m.value}>
-                          {m.label}
-                        </SelectItem>
+                        <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
                       ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="grid gap-1">
-                  <Label
-                    htmlFor="effort-select"
-                    className="text-xs text-foreground"
-                  >
-                    Effort
-                  </Label>
-                  <Select value={effort} onValueChange={(v: "low" | "medium" | "high") => setEffort(v)}>
-                    <SelectTrigger id="effort-select" className="w-full">
-                      <SelectValue placeholder="Select effort" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="low">Low</SelectItem>
-                      <SelectItem value="medium">Medium</SelectItem>
-                      <SelectItem value="high">High</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
 
                 {!isConfigLoading && (
                   <PaymentOption
-                    effort={effort}
+                    effort="high"
                     model={selectedModel}
                     onPaymentComplete={setPaymentToken}
                     onStartAnalysis={handleSubmit}
@@ -326,16 +244,12 @@ export default function Page() {
                   </span>
                 )}
 
-                {submitError && (
-                  <div className="text-xs text-destructive">{submitError}</div>
-                )}
+                {submitError && <div className="text-xs text-destructive">{submitError}</div>}
 
                 {recentJobs.length > 0 && (
                   <div className="pt-1">
                     <div className="flex items-baseline justify-between gap-3">
-                      <span className="text-xs text-muted-foreground">
-                        Recent runs
-                      </span>
+                      <span className="text-xs text-muted-foreground">Recent runs</span>
                       <button
                         type="button"
                         onClick={() => setRecentJobs([])}
@@ -349,18 +263,12 @@ export default function Page() {
                         <button
                           key={job.job_id}
                           type="button"
-                          onClick={() =>
-                            router.push(`/results?job_id=${job.job_id}`)
-                          }
+                          onClick={() => router.push(`/results?job_id=${job.job_id}`)}
                           className="flex w-full items-center justify-between gap-3 rounded-md px-2 py-1.5 text-left text-xs hover:bg-muted/40"
                           title={job.job_id}
                         >
-                          <span className="min-w-0 flex-1 truncate text-foreground">
-                            {job.label}
-                          </span>
-                          <span className="shrink-0 font-mono text-muted-foreground">
-                            {job.job_id.slice(0, 8)}
-                          </span>
+                          <span className="min-w-0 flex-1 truncate text-foreground">{job.label}</span>
+                          <span className="shrink-0 font-mono text-muted-foreground">{job.job_id.slice(0, 8)}</span>
                         </button>
                       ))}
                     </div>

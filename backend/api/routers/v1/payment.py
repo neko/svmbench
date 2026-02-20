@@ -1,4 +1,3 @@
-import asyncio
 import secrets
 from typing import Annotated, Literal
 
@@ -11,7 +10,7 @@ from api.core.config import settings
 from api.core.deps import get_db
 from api.models.payment import Payment
 from api.util.pricing import (
-    TOKEN_BUDGETS,
+    TOKEN_BUDGET,
     calculate_model_price,
     calculate_model_price_sync,
     calculate_total_price,
@@ -20,7 +19,6 @@ from api.util.pricing import (
     get_x402_pricing,
 )
 from api.util.solana import verify_usdc_transfer
-from api.util.telegram import log_payment_received
 
 SessionDep = Annotated[AsyncSession, Depends(get_db)]
 
@@ -30,9 +28,9 @@ router = APIRouter(prefix='/payment', tags=['payment'])
 class ModelInfo(BaseModel):
     id: str
     name: str
-    input_price: float  # per 1M input tokens
-    output_price: float  # per 1M output tokens
-    audit_price: float  # total price for audit (with markup)
+    input_price: float
+    output_price: float
+    audit_price: float
 
 
 class PaymentConfigResponse(BaseModel):
@@ -40,21 +38,21 @@ class PaymentConfigResponse(BaseModel):
     receiver_wallet: str | None
     markup: float
     markup_percent: int
-    token_budgets: dict[str, dict[str, int]]  # effort -> {input_tokens, output_tokens}
-    models: list[ModelInfo]  # available models with pricing
-    model_prices: dict[str, dict[str, float]]  # effort -> {model -> price}
+    token_budgets: dict[str, dict[str, int]]
+    models: list[ModelInfo]
+    model_prices: dict[str, dict[str, float]]
 
 
 class CalculatePriceRequest(BaseModel):
     models: list[str]
-    effort: Literal['low', 'medium', 'high'] = 'medium'
+    effort: Literal['low', 'medium', 'high'] = 'high'
 
 
 class CalculatePriceResponse(BaseModel):
     total: float
-    breakdown: dict[str, float]  # model -> price
+    breakdown: dict[str, float]
     effort: str
-    token_budget: dict[str, int]  # input_tokens, output_tokens
+    token_budget: dict[str, int]
     markup_percent: int
 
 
@@ -63,7 +61,7 @@ class VerifyPaymentRequest(BaseModel):
     payer_wallet: str
     amount: float
     model: str
-    effort: Literal['low', 'medium', 'high'] = 'medium'
+    effort: Literal['low', 'medium', 'high'] = 'high'
 
 
 class VerifyPaymentResponse(BaseModel):
@@ -73,49 +71,32 @@ class VerifyPaymentResponse(BaseModel):
 
 @router.get('/config')
 async def get_payment_config() -> PaymentConfigResponse:
-    """Get payment configuration including per-model pricing from Daydreams router.
-
-    Daydreams uses token-based pricing. Token budgets vary by effort level:
-    - low: ~50k input, ~10k output
-    - medium: ~150k input, ~30k output
-    - high: ~300k input, ~60k output
-
-    Price = (input_tokens * input_price/1M) + (output_tokens * output_price/1M) * (1 + markup)
-
-    Models are fetched dynamically from Daydreams router.
-    """
-    # Fetch models and prices from Daydreams
+    """Get payment configuration with per-model pricing."""
     models_raw = await get_x402_models()
     pricing = await get_x402_pricing()
 
-    # Build model info list with audit prices (using medium as default display price)
     models: list[ModelInfo] = []
-
     for model in models_raw:
         model_id = model['id']
-        audit_price = calculate_model_price_sync(model_id, pricing, effort='medium')
         models.append(ModelInfo(
             id=model_id,
             name=model['name'],
             input_price=model.get('input_price', 0),
             output_price=model.get('output_price', 0),
-            audit_price=audit_price,
+            audit_price=calculate_model_price_sync(model_id, pricing),
         ))
 
-    # Build prices for all effort levels
+    # All efforts use the same (max) price now
     model_prices: dict[str, dict[str, float]] = {}
     for effort in ['low', 'medium', 'high']:
-        model_prices[effort] = {}
-        for model in models_raw:
-            model_id = model['id']
-            model_prices[effort][model_id] = calculate_model_price_sync(model_id, pricing, effort=effort)
+        model_prices[effort] = {m['id']: calculate_model_price_sync(m['id'], pricing) for m in models_raw}
 
     return PaymentConfigResponse(
         enabled=settings.PAYMENT_ENABLED,
         receiver_wallet=settings.SOLANA_SERVICE_WALLET_ADDRESS,
         markup=settings.PAYMENT_MARKUP,
         markup_percent=int(settings.PAYMENT_MARKUP * 100),
-        token_budgets=TOKEN_BUDGETS,
+        token_budgets={'low': TOKEN_BUDGET, 'medium': TOKEN_BUDGET, 'high': TOKEN_BUDGET},
         models=models,
         model_prices=model_prices,
     )
@@ -123,37 +104,27 @@ async def get_payment_config() -> PaymentConfigResponse:
 
 @router.post('/calculate')
 async def calc_price_endpoint(request: CalculatePriceRequest) -> CalculatePriceResponse:
-    """Calculate price for specific models and effort level.
-
-    Daydreams uses token-based pricing.
-    Price = (input_tokens * input_price/1M) + (output_tokens * output_price/1M) * (1 + markup)
-    """
-    breakdown = {}
-    for model in request.models:
-        breakdown[model] = await calculate_model_price(model, request.effort)
-
-    total = await calculate_total_price(request.models, request.effort)
+    """Calculate price for models (effort ignored, always max)."""
+    breakdown = {model: await calculate_model_price(model) for model in request.models}
+    total = await calculate_total_price(request.models)
 
     return CalculatePriceResponse(
         total=total,
         breakdown=breakdown,
-        effort=request.effort,
-        token_budget=TOKEN_BUDGETS.get(request.effort, TOKEN_BUDGETS['medium']),
+        effort='high',
+        token_budget=TOKEN_BUDGET,
         markup_percent=int(settings.PAYMENT_MARKUP * 100),
     )
 
 
 @router.post('/breakdown')
 async def get_price_breakdown(request: CalculatePriceRequest) -> dict:
-    """Get detailed pricing breakdown showing x402 costs."""
-    return await get_pricing_breakdown(request.models, request.effort)
+    """Get detailed pricing breakdown."""
+    return await get_pricing_breakdown(request.models)
 
 
 @router.post('/verify')
-async def verify_payment(
-    request: VerifyPaymentRequest,
-    session: SessionDep,
-) -> VerifyPaymentResponse:
+async def verify_payment(request: VerifyPaymentRequest, session: SessionDep) -> VerifyPaymentResponse:
     if not settings.PAYMENT_ENABLED:
         raise HTTPException(status_code=400, detail='Payments are not enabled')
 
@@ -163,15 +134,11 @@ async def verify_payment(
     if not request.model:
         raise HTTPException(status_code=400, detail='Model is required')
 
-    # Check if this signature has already been used
-    existing = await session.execute(
-        select(Payment).where(Payment.signature == request.signature)
-    )
+    existing = await session.execute(select(Payment).where(Payment.signature == request.signature))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail='Payment signature already used')
 
-    # Calculate expected price based on model and effort (x402 flat per-request pricing)
-    expected_amount = await calculate_total_price([request.model], request.effort)
+    expected_amount = await calculate_total_price([request.model])
 
     try:
         is_valid = await verify_usdc_transfer(
@@ -187,17 +154,10 @@ async def verify_payment(
     if not is_valid:
         raise HTTPException(status_code=400, detail='Transaction verification failed')
 
-    # Check amount matches expected price (allow small tolerance for floating point)
     if request.amount < expected_amount - 0.01:
-        raise HTTPException(
-            status_code=400,
-            detail=f'Payment amount ${request.amount:.2f} is less than required ${expected_amount:.2f}',
-        )
+        raise HTTPException(status_code=400, detail=f'Payment ${request.amount:.2f} < required ${expected_amount:.2f}')
 
-    # Generate payment token
     payment_token = secrets.token_hex(32)
-
-    # Store payment record with model
     payment = Payment(
         signature=request.signature,
         payer_wallet=request.payer_wallet,
@@ -209,43 +169,4 @@ async def verify_payment(
     session.add(payment)
     await session.commit()
 
-    # Log to Telegram (fire and forget)
-    asyncio.create_task(log_payment_received(
-        signature=request.signature,
-        amount=request.amount,
-        payer_wallet=request.payer_wallet,
-        model=request.model,
-    ))
-
     return VerifyPaymentResponse(valid=True, payment_token=payment_token)
-
-
-async def validate_payment_token(
-    session: SessionDep,
-    payment_token: str,
-    effort: str,
-    model: str,
-) -> Payment | None:
-    """Validate and consume a payment token. Returns the Payment if valid, None otherwise."""
-    result = await session.execute(
-        select(Payment).where(
-            Payment.payment_token == payment_token,
-            Payment.used == False,  # noqa: E712
-            Payment.effort == effort,
-        )
-    )
-    payment = result.scalar_one_or_none()
-
-    if not payment:
-        return None
-
-    # Verify model matches
-    if payment.models != model:
-        return None
-
-    payment.used = True
-    from datetime import datetime, timezone
-    payment.used_at = datetime.now(timezone.utc)
-    await session.commit()
-
-    return payment

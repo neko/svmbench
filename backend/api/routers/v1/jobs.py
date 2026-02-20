@@ -1,4 +1,3 @@
-import asyncio
 import os
 import uuid
 from contextlib import suppress
@@ -27,7 +26,6 @@ from api.schemas.job import (
 )
 from api.secrets.impl import secret_storage
 from api.util.secrets_bundle import build_secret_bundle, build_secret_bundle_from_bytes
-from api.util.telegram import log_job_created
 from api.util.zip_validate import ZipValidationError, validate_zip_bytes
 
 PUBLIC_SOURCES_DIR = ROOT_DIR / 'public_sources'
@@ -228,20 +226,6 @@ async def start_job(
             await session.commit()
             raise HTTPException(status_code=502, detail='Failed to enqueue job') from err
 
-        # Log to Telegram
-        from api.util.pricing import calculate_model_price
-        try:
-            price = await calculate_model_price(job.model, job.effort)
-        except Exception:
-            price = 0.0
-        asyncio.create_task(log_job_created(
-            job_id=str(job.id),
-            model=job.model,
-            file_name=job.file_name or 'unknown',
-            price=price,
-            user_wallet=token.user_id,
-        ))
-
         return StartJobResponse(
             batch_id=batch_id,
             jobs=[BatchJobItem.model_validate(job)],
@@ -331,20 +315,6 @@ async def start_job_from_url(
         await session.delete(job)
         await session.commit()
         raise HTTPException(status_code=502, detail='Failed to enqueue job') from err
-
-    # Log to Telegram
-    from api.util.pricing import calculate_model_price
-    try:
-        price = await calculate_model_price(job.model, job.effort)
-    except Exception:
-        price = 0.0
-    asyncio.create_task(log_job_created(
-        job_id=str(job.id),
-        model=job.model,
-        file_name=job.file_name or 'unknown',
-        price=price,
-        user_wallet=token.user_id,
-    ))
 
     return StartJobResponse(
         batch_id=batch_id,

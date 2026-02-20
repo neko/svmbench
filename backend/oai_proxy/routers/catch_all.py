@@ -172,14 +172,27 @@ def _parse_x402_payment_required(response: httpx.Response) -> dict | None:
 
 
 def _get_solana_payment_option(payment_info: dict) -> dict | None:
-    """Extract Solana payment option from x402 accepts array."""
-    accepts = payment_info.get('accepts', [])
-    for option in accepts:
-        network = option.get('network', '')
-        # Solana mainnet: solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp
-        if network.startswith('solana:'):
-            return option
+    """Extract Solana payment option from x402 accepts array.
+
+    NOTE: x402 Solana payments require the @x402/svm SDK's partial signing
+    protocol, not raw transaction signatures. Direct USDC transfers don't work.
+    See: https://github.com/coinbase/x402/tree/main/typescript/packages/svm
+
+    For now, Solana payments are NOT SUPPORTED. Use Base/EVM instead.
+    """
+    # Solana x402 requires their SDK's partial signing mechanism
+    # Raw transaction signatures are rejected by the facilitator
+    # TODO: Implement using Node.js helper or port x402/svm SDK
     return None
+
+    # Original code (doesn't work - x402 expects partial signing):
+    # accepts = payment_info.get('accepts', [])
+    # for option in accepts:
+    #     network = option.get('network', '')
+    #     # Solana mainnet: solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp
+    #     if network.startswith('solana:'):
+    #         return option
+    # return None
 
 
 async def _make_x402_payment(amount_raw: str, receiver: str, asset: str, fee_payer: str | None = None) -> str:
@@ -194,6 +207,7 @@ async def _make_x402_payment(amount_raw: str, receiver: str, asset: str, fee_pay
     try:
         from solana.rpc.async_api import AsyncClient
         from solders.pubkey import Pubkey
+        from solders.signature import Signature
         from solders.transaction import Transaction
         from spl.token.instructions import TransferParams, transfer, get_associated_token_address
 
@@ -237,13 +251,14 @@ async def _make_x402_payment(amount_raw: str, receiver: str, asset: str, fee_pay
 
             # Send transaction
             result = await client.send_transaction(tx)
-            signature = str(result.value)
+            sig = result.value
+            signature_str = str(sig)
 
-            # Wait for confirmation
-            await client.confirm_transaction(signature, 'confirmed')
+            # Wait for confirmation (needs Signature object, not string)
+            await client.confirm_transaction(sig, 'confirmed')
 
-            logger.info(f'x402 payment sent: {signature}')
-            return signature
+            logger.info(f'x402 payment sent: {signature_str}')
+            return signature_str
 
     except Exception as e:
         logger.error(f'x402 payment failed: {e}')
@@ -258,88 +273,50 @@ async def _proxy_x402_request(
     model: str,
     body: dict,
 ) -> Response:
-    """Proxy a request through x402 with payment."""
-    import base64
+    """Proxy a request through x402 using the x402helper Node.js service.
 
-    endpoint = _get_x402_endpoint_for_model(model)
-
-    keypair = await _get_x402_keypair()
-    if not keypair:
+    The x402helper service uses the official @x402/svm SDK to handle the
+    x402 payment protocol with proper partial signing.
+    """
+    helper_url = settings.X402_HELPER_URL
+    if not helper_url:
         raise HTTPException(
             status_code=501,
-            detail='x402 service wallet not configured for paid requests',
+            detail='x402 helper service not configured (X402_HELPER_URL not set)',
         )
 
-    headers = {
-        'Content-Type': 'application/json',
-        'X-Payer-Wallet': str(keypair.pubkey()),
-    }
+    # Forward to x402helper's chat completions endpoint
+    target_url = f'{helper_url}/v1/chat/completions'
+
+    logger.info(f'x402 request via helper: {model}')
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, read=None)) as client:
-        # Initial request to x402
-        logger.info(f'x402 request to {endpoint} for model {model}')
-        response = await client.post(endpoint, json=body, headers=headers)
+        try:
+            response = await client.post(
+                target_url,
+                json=body,
+                headers={'Content-Type': 'application/json'},
+            )
 
-        # Handle 402 Payment Required
-        if response.status_code == 402:
-            # Parse PAYMENT-REQUIRED header (x402 protocol v2)
-            payment_info = _parse_x402_payment_required(response)
-            if not payment_info:
-                raise HTTPException(
-                    status_code=502,
-                    detail='x402 returned 402 but no PAYMENT-REQUIRED header',
-                )
+            logger.info(f'x402 helper response: {response.status_code}')
 
-            # Get Solana payment option
-            solana_option = _get_solana_payment_option(payment_info)
-            if not solana_option:
-                raise HTTPException(
-                    status_code=502,
-                    detail='x402 does not accept Solana payments',
-                )
-
-            amount_raw = solana_option.get('amount', '0')
-            receiver = solana_option.get('payTo', '')
-            asset = solana_option.get('asset', '')
-            fee_payer = solana_option.get('extra', {}).get('feePayer')
-
-            amount_usd = int(amount_raw) / 1_000_000
-            logger.info(f'x402 requires payment: ${amount_usd:.4f} USDC for {model}')
-
-            # Make USDC payment on Solana
-            signature = await _make_x402_payment(amount_raw, receiver, asset, fee_payer)
-
-            # Build PAYMENT-RESPONSE header (x402 protocol v2)
-            # Format: base64 encoded JSON with network, payload (signature), and payer
-            payment_response = {
-                'x402Version': 2,
-                'network': solana_option.get('network'),
-                'payload': signature,
-                'payer': str(keypair.pubkey()),
-            }
-            payment_response_b64 = base64.b64encode(
-                json.dumps(payment_response).encode()
-            ).decode()
-
-            # Retry with payment proof
-            headers['Payment-Response'] = payment_response_b64
-
-            logger.info(f'x402 retrying with payment proof: {signature[:20]}...')
-            response = await client.post(endpoint, json=body, headers=headers)
-
-        if response.status_code != 200:
-            logger.warning(f'x402 response: {response.status_code} - {response.text[:500]}')
             return Response(
                 content=response.content,
                 status_code=response.status_code,
-                media_type='application/json',
+                media_type=response.headers.get('content-type', 'application/json'),
             )
-
-        return Response(
-            content=response.content,
-            status_code=200,
-            media_type='application/json',
-        )
+        except httpx.ConnectError as e:
+            logger.error(f'x402 helper connection failed: {e}')
+            raise HTTPException(
+                status_code=502,
+                detail='x402 helper service unavailable',
+            ) from e
+        except Exception as e:
+            logger.error(f'x402 helper error: {e}')
+            raise HTTPException(
+                status_code=502,
+                detail=f'x402 helper error: {e}',
+            ) from e
 
 
 def _get_authorization_token(request: Request) -> str:

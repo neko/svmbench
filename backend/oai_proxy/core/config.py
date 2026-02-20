@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     X402_GATEWAY_URL: str = 'https://x402-gateway-production.up.railway.app'
     # Solana RPC for payment transactions
     PAYMENT_SOLANA_RPC_URL: str = 'https://deborah-q5m00f-fast-mainnet.helius-rpc.com'
+    # x402 helper service URL (Node.js service using @x402/svm SDK)
+    X402_HELPER_URL: str | None = None
 
 
 settings = Settings()  # type: ignore[missing-argument]

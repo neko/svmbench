@@ -80,6 +80,22 @@ services:
       - db
       - shared_network
 
+  x402helper:
+    profiles: ["proxy"]
+    build:
+      dockerfile: x402helper/Dockerfile
+      context: .
+    container_name: x402helper
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      X402_HELPER_PORT: 8085
+      X402_SERVICE_WALLET_KEY: ${X402_SERVICE_WALLET_KEY:-}
+      SOLANA_RPC_URL: ${PAYMENT_SOLANA_RPC_URL:-https://api.mainnet-beta.solana.com}
+    networks:
+      - app
+
   oai_proxy:
     profiles: ["proxy"]
     image: svmbench/backend:latest
@@ -96,6 +112,10 @@ services:
       OAI_PROXY_PORT: 8084
       # Required only when running with profile "proxy"
       OAI_PROXY_AES_KEY: ${OAI_PROXY_AES_KEY:-}
+      # x402 helper service URL
+      X402_HELPER_URL: http://x402helper:8085
+    depends_on:
+      - x402helper
     ports:
       - "127.0.0.1:8084:8084"
     networks:

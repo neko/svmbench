@@ -2,8 +2,6 @@
 
 import { useConnection, useWallet } from "@solana/wallet-adapter-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import {
   calculatePrice,
   calculatePriceFromConfig,
@@ -15,15 +13,11 @@ import {
 } from "@/lib/payment"
 
 interface PaymentOptionProps {
-  provider: "openai" | "openrouter" | "x402"
   effort: EffortLevel
   model: string
-  apiKey: string
-  onApiKeyChange: (key: string) => void
   onPaymentComplete: (paymentToken: string) => void
   onStartAnalysis: (paymentToken?: string) => void
   disabled?: boolean
-  keyPredefined?: boolean
   isSubmitting?: boolean
 }
 
@@ -42,15 +36,11 @@ const SolflareLogo = () => (
 )
 
 export function PaymentOption({
-  provider,
   effort,
   model,
-  apiKey,
-  onApiKeyChange,
   onPaymentComplete,
   onStartAnalysis,
   disabled,
-  keyPredefined,
   isSubmitting,
 }: PaymentOptionProps) {
   const { connection } = useConnection()
@@ -58,6 +48,7 @@ export function PaymentOption({
 
   const [paymentConfig, setPaymentConfig] = useState<PaymentConfig | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
+  const [processingStage, setProcessingStage] = useState<string>("")
   const [paymentError, setPaymentError] = useState<string | null>(null)
   const [paymentSuccess, setPaymentSuccess] = useState(false)
   const [serverPrice, setServerPrice] = useState<number | null>(null)
@@ -85,20 +76,18 @@ export function PaymentOption({
 
   // Fetch payment config on mount
   useEffect(() => {
-    if (provider === 'x402') {
-      fetchPaymentConfig()
-        .then((config) => {
-          if (config.enabled) {
-            setPaymentConfig(config)
-          }
-        })
-        .catch(() => {})
-    }
-  }, [provider])
+    fetchPaymentConfig()
+      .then((config) => {
+        if (config.enabled) {
+          setPaymentConfig(config)
+        }
+      })
+      .catch(() => {})
+  }, [])
 
-  // Fetch price when model or effort changes (x402 only)
+  // Fetch price when model or effort changes
   useEffect(() => {
-    if (provider !== 'x402' || !paymentConfig?.enabled || !model) {
+    if (!paymentConfig?.enabled || !model) {
       setServerPrice(null)
       return
     }
@@ -108,7 +97,7 @@ export function PaymentOption({
       .then((result) => setServerPrice(result.total))
       .catch(() => setServerPrice(null))
       .finally(() => setIsLoadingPrice(false))
-  }, [model, effort, paymentConfig?.enabled, provider])
+  }, [model, effort, paymentConfig?.enabled])
 
   // Reset payment state when model changes
   useEffect(() => {
@@ -160,6 +149,7 @@ export function PaymentOption({
 
     setIsProcessing(true)
     setPaymentError(null)
+    setProcessingStage("Creating transaction...")
 
     try {
       // Create and sign the transaction
@@ -170,13 +160,18 @@ export function PaymentOption({
         priceToCharge,
       )
 
+      setProcessingStage("Waiting for signature...")
       const signedTransaction = await signTransaction(transaction)
+
+      setProcessingStage("Sending transaction...")
       const signature = await connection.sendRawTransaction(
         signedTransaction.serialize(),
       )
 
+      setProcessingStage("Confirming on Solana...")
       await connection.confirmTransaction(signature, "confirmed")
 
+      setProcessingStage("Verifying payment...")
       // Verify with backend
       const result = await verifyPayment({
         signature,
@@ -187,6 +182,7 @@ export function PaymentOption({
       })
 
       if (result.valid) {
+        setProcessingStage("Starting analysis...")
         setPaymentSuccess(true)
         onPaymentComplete(result.payment_token)
         // Start analysis after payment - pass token directly to avoid state timing issues
@@ -201,6 +197,7 @@ export function PaymentOption({
       )
     } finally {
       setIsProcessing(false)
+      setProcessingStage("")
     }
   }, [
     publicKey,
@@ -215,31 +212,6 @@ export function PaymentOption({
     onStartAnalysis,
   ])
 
-  // If key is predefined, don't show any payment options
-  if (keyPredefined) {
-    return null
-  }
-
-  // For OpenAI/OpenRouter - just show API key input
-  if (provider !== 'x402') {
-    return (
-      <div className="grid gap-1">
-        <Label htmlFor="api-key" className="text-xs text-foreground">
-          {provider === "openrouter" ? "OpenRouter API Key" : "OpenAI API Key"}
-        </Label>
-        <Input
-          id="api-key"
-          type="password"
-          placeholder={provider === "openrouter" ? "sk-or-..." : "sk-..."}
-          value={apiKey}
-          onChange={(e) => onApiKeyChange(e.target.value)}
-          disabled={disabled}
-        />
-      </div>
-    )
-  }
-
-  // x402 mode - show wallet connection and payment
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between text-xs">
@@ -302,7 +274,7 @@ export function PaymentOption({
             {isPhantom && <PhantomLogo />}
             {isSolflare && <SolflareLogo />}
             <span>
-              {isProcessing || isSubmitting ? "Processing..." : `Pay $${displayPrice.toFixed(2)} & Start Analysis`}
+              {isProcessing ? processingStage || "Processing..." : isSubmitting ? "Uploading..." : `Pay $${displayPrice.toFixed(2)} & Start Analysis`}
             </span>
           </button>
           <div className="flex items-center justify-between text-xs text-muted-foreground">

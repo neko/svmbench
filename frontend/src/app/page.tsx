@@ -9,7 +9,6 @@ import { AppFooter } from "@/components/app-footer"
 import { AppHeader } from "@/components/app-header"
 import { FileUploader } from "@/components/file-uploader"
 import { PaymentOption, usePaymentMode } from "@/components/payment-option"
-import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import {
   Select,
@@ -20,62 +19,40 @@ import {
 } from "@/components/ui/select"
 import { useAuth } from "@/hooks/use-auth"
 import { useLocalStorage } from "@/hooks/use-local-storage"
-import { useSessionStorage } from "@/hooks/use-session-storage"
 import { API_BASE } from "@/lib/api"
 import { startJob, startJobFromUrl } from "@/lib/jobs"
-import { fetchPaymentConfig, type X402ModelInfo } from "@/lib/payment"
+import { fetchPaymentConfig, type ModelInfo } from "@/lib/payment"
 import { addRecentJob, type RecentJob } from "@/lib/recent-jobs"
 import { inferPackageName } from "@/lib/upload-utils"
 import { createZipFromFiles } from "@/lib/zip"
 import { useUploadStore } from "@/store/upload-store"
 
-const OPENAI_MODELS = [
-  { value: "codex-gpt-5.2", label: "codex-gpt-5.2" },
-  { value: "codex-gpt-5.1-codex-max", label: "codex-gpt-5.1-codex-max" },
-]
-
-const OPENROUTER_MODELS = [
-  { value: "anthropic/claude-opus-4.6", label: "anthropic/claude-opus-4.6" },
-  { value: "anthropic/claude-opus-4.5", label: "anthropic/claude-opus-4.5" },
-  { value: "openai/gpt-5.2-codex", label: "openai/gpt-5.2-codex" },
-  { value: "openai/gpt-5.1-codex-max", label: "openai/gpt-5.1-codex-max" },
-  { value: "deepseek/deepseek-v3.2", label: "deepseek/deepseek-v3.2" },
-  { value: "google/gemini-3-flash-preview", label: "google/gemini-3-flash-preview" },
-  { value: "x-ai/grok-4.1-fast", label: "x-ai/grok-4.1-fast" },
-  { value: "minimax/minimax-m2.5", label: "minimax/minimax-m2.5" },
-  { value: "moonshotai/kimi-k2.5", label: "moonshotai/kimi-k2.5" },
-  { value: "z-ai/glm-5", label: "z-ai/glm-5" },
-]
-
-type Provider = "x402" | "openai" | "openrouter"
-
 export default function Page() {
   const router = useRouter()
   const { inputMode, files, packageName, sourceUrl, setInputMode, setUpload, setSourceUrl, clearUpload } = useUploadStore()
-  const [apiKey, setApiKey] = useSessionStorage("svmbench.apiKey", "")
-  const [provider, setProvider] = useState<Provider>("x402")
   const [selectedModel, setSelectedModel] = useState<string>("")
   const [effort, setEffort] = useState<"low" | "medium" | "high">("medium")
-  const [x402Models, setX402Models] = useState<X402ModelInfo[]>([])
-  const [x402ModelsLoading, setX402ModelsLoading] = useState(true)
+  const [models, setModels] = useState<ModelInfo[]>([])
+  const [modelsLoading, setModelsLoading] = useState(true)
 
-  // Fetch x402 models from API on mount
+  // Fetch models from API on mount
   useEffect(() => {
     fetchPaymentConfig()
       .then((config) => {
-        setX402Models(config.x402_models)
+        setModels(config.models)
         // Set default selection to first model if none selected
-        if (config.x402_models.length > 0 && !selectedModel) {
-          setSelectedModel(config.x402_models[0].id)
+        if (config.models.length > 0 && !selectedModel) {
+          setSelectedModel(config.models[0].id)
         }
       })
       .catch((err) => {
-        console.error("Failed to fetch x402 models:", err)
+        console.error("Failed to fetch models:", err)
       })
       .finally(() => {
-        setX402ModelsLoading(false)
+        setModelsLoading(false)
       })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [recentJobs, setRecentJobs] = useLocalStorage<RecentJob[]>(
@@ -86,7 +63,6 @@ export default function Page() {
     isAuthorized,
     isLoading: isAuthLoading,
     isConfigLoading,
-    keyPredefined,
   } = useAuth()
   const { paymentToken, setPaymentToken, clearPaymentToken } = usePaymentMode()
 
@@ -97,54 +73,21 @@ export default function Page() {
     return null
   }, [files, packageName])
 
-  // Convert x402 models to the same format as other models
-  const x402ModelOptions = useMemo(() =>
-    x402Models.map((m) => ({ value: m.id, label: m.name })),
-    [x402Models]
+  // Convert models to select format
+  const modelOptions = useMemo(() =>
+    models.map((m) => ({ value: m.id, label: m.name })),
+    [models]
   )
-
-  const models = provider === "x402"
-    ? x402ModelOptions
-    : provider === "openrouter"
-    ? OPENROUTER_MODELS
-    : OPENAI_MODELS
 
   const hasValidInput = inputMode === "url"
     ? !!sourceUrl && sourceUrl.trim().length > 0
     : !!files && fileCount > 0
-
-  // For x402, payment token is required; for others, API key is required
-  const hasValidAuth = provider === "x402"
-    ? !!paymentToken
-    : keyPredefined || apiKey.trim().length > 0
-
-  const canSubmit =
-    hasValidInput && !isSubmitting && !isAuthLoading && isAuthorized && !!selectedModel && hasValidAuth
 
   const handleFilesSelected = useCallback(
     (selected: File[]) => {
       setUpload(selected, inferPackageName(selected))
     },
     [setUpload],
-  )
-
-  const handleProviderChange = useCallback(
-    (value: Provider) => {
-      setProvider(value)
-      // Reset model to first available for new provider
-      if (value === "x402") {
-        setSelectedModel(x402Models.length > 0 ? x402Models[0].id : "")
-      } else if (value === "openrouter") {
-        setSelectedModel(OPENROUTER_MODELS[0].value)
-      } else {
-        setSelectedModel(OPENAI_MODELS[0].value)
-      }
-      // Clear payment token when switching away from x402
-      if (value !== "x402") {
-        clearPaymentToken()
-      }
-    },
-    [clearPaymentToken, x402Models],
   )
 
   const handleSubmit = useCallback(async (directToken?: string) => {
@@ -157,6 +100,12 @@ export default function Page() {
       return
     }
 
+    const token = directToken ?? paymentToken
+    if (!token) {
+      setSubmitError("Payment required.")
+      return
+    }
+
     setIsSubmitting(true)
     setSubmitError(null)
 
@@ -164,18 +113,13 @@ export default function Page() {
       let response
       let name: string
 
-      // For x402, we pass the payment token; for others, the API key
-      // Use directToken if provided (from payment callback), otherwise use state
-      const authKey = provider === "x402" ? "" : apiKey.trim()
-      const token = provider === "x402" ? (directToken ?? paymentToken ?? undefined) : undefined
-
       if (inputMode === "url" && sourceUrl) {
         name = extractNameFromUrl(sourceUrl)
-        response = await startJobFromUrl(sourceUrl, selectedModel, authKey, provider, effort, token)
+        response = await startJobFromUrl(sourceUrl, selectedModel, effort, token)
       } else if (files && fileCount > 0) {
         name = selectedLabel ?? "files"
         const zipFile = await createZipFromFiles(files, name)
-        response = await startJob(zipFile, selectedModel, authKey, provider, effort, token)
+        response = await startJob(zipFile, selectedModel, effort, token)
       } else {
         setSubmitError("Please provide files or a URL")
         return
@@ -198,8 +142,6 @@ export default function Page() {
   }, [
     isAuthorized,
     selectedModel,
-    provider,
-    apiKey,
     paymentToken,
     inputMode,
     sourceUrl,
@@ -325,34 +267,15 @@ export default function Page() {
 
               <div className="grid gap-3 text-xs text-muted-foreground">
                 <div className="grid gap-1">
-                  <Label
-                    htmlFor="provider-select"
-                    className="text-xs text-foreground"
-                  >
-                    Provider
-                  </Label>
-                  <Select value={provider} onValueChange={handleProviderChange}>
-                    <SelectTrigger id="provider-select" className="w-full">
-                      <SelectValue placeholder="Select provider" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="x402">x402 (Pay with USDC)</SelectItem>
-                      <SelectItem value="openai">OpenAI</SelectItem>
-                      <SelectItem value="openrouter">OpenRouter</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="grid gap-1">
                   <Label htmlFor="model-select" className="text-xs text-foreground">
                     Model
                   </Label>
                   <Select value={selectedModel} onValueChange={setSelectedModel}>
                     <SelectTrigger id="model-select" className="w-full">
-                      <SelectValue placeholder="Select model" />
+                      <SelectValue placeholder={modelsLoading ? "Loading..." : "Select model"} />
                     </SelectTrigger>
                     <SelectContent>
-                      {models.map((m) => (
+                      {modelOptions.map((m) => (
                         <SelectItem key={m.value} value={m.value}>
                           {m.label}
                         </SelectItem>
@@ -382,15 +305,11 @@ export default function Page() {
 
                 {!isConfigLoading && (
                   <PaymentOption
-                    provider={provider}
                     effort={effort}
                     model={selectedModel}
-                    apiKey={apiKey}
-                    onApiKeyChange={setApiKey}
                     onPaymentComplete={setPaymentToken}
                     onStartAnalysis={handleSubmit}
                     disabled={isSubmitting || !hasValidInput || !isAuthorized}
-                    keyPredefined={keyPredefined}
                     isSubmitting={isSubmitting}
                   />
                 )}
@@ -405,17 +324,6 @@ export default function Page() {
                     </a>{" "}
                     to start analysis.
                   </span>
-                )}
-
-                {/* Show start button only for non-x402 providers */}
-                {provider !== "x402" && (
-                  <Button
-                    onClick={() => handleSubmit()}
-                    disabled={!canSubmit}
-                    className="w-full uppercase"
-                  >
-                    {isSubmitting ? "Uploading…" : "Start analysis"}
-                  </Button>
                 )}
 
                 {submitError && (

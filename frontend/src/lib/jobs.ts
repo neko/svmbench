@@ -119,31 +119,21 @@ export async function setJobPublic(
 export interface StartJobOptions {
   file: File
   model: string
-  apiKey?: string
-  provider?: string
   effort?: string
-  paymentToken?: string
+  paymentToken: string
 }
 
 export async function startJob(
   file: File,
   model: string,
-  apiKey: string,
-  provider: string = "openai",
   effort: string = "medium",
-  paymentToken?: string,
+  paymentToken: string,
 ): Promise<StartJobResponse> {
   const body = new FormData()
   body.append("file", file)
   body.append("model", model)
-  body.append("provider", provider)
   body.append("effort", effort)
-
-  if (paymentToken) {
-    body.append("payment_token", paymentToken)
-  } else {
-    body.append("openai_key", apiKey)
-  }
+  body.append("payment_token", paymentToken)
 
   const response = await fetch(`${API_BASE}/v1/jobs/start`, {
     method: "POST",
@@ -162,22 +152,14 @@ export async function startJob(
 export async function startJobFromUrl(
   sourceUrl: string,
   model: string,
-  apiKey: string,
-  provider: string = "openai",
   effort: string = "medium",
-  paymentToken?: string,
+  paymentToken: string,
 ): Promise<StartJobResponse> {
-  const payload: Record<string, string> = {
+  const payload = {
     source_url: sourceUrl,
     model,
-    provider,
     effort,
-  }
-
-  if (paymentToken) {
-    payload.payment_token = paymentToken
-  } else {
-    payload.openai_key = apiKey
+    payment_token: paymentToken,
   }
 
   const response = await fetch(`${API_BASE}/v1/jobs/start-from-url`, {

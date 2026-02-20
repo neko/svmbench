@@ -1,5 +1,3 @@
-from typing import Literal
-
 from pydantic import AliasChoices, Field, PostgresDsn, Secret, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -42,18 +40,6 @@ class Settings(BaseSettings):
     BACKEND_JWT_SECRET: Secret[str]
     BACKEND_JWT_TTL_SECONDS: int = 60 * 60 * 24 * 30  # 30d
 
-    # How to pass OpenAI credentials to the worker.
-    # - direct: worker receives plaintext OPENAI_API_KEY (default for OSS)
-    # - proxy: worker receives encrypted token; oai_proxy decrypts and forwards upstream
-    BACKEND_OAI_KEY_MODE: Literal['direct', 'proxy'] = 'direct'
-
-    BACKEND_STATIC_OAI_KEY: Secret[str] | None = None
-    # When true, use the proxy's static key (sends "STATIC" marker instead of encrypted key)
-    # The real OpenAI key is only known by oai_proxy, never exposed to backend or agents
-    BACKEND_USE_PROXY_STATIC_KEY: bool = False
-    # Required only when BACKEND_OAI_KEY_MODE="proxy"
-    OAI_PROXY_AES_KEY: Secret[str] | None = None
-
     RABBITMQ_DSN: Secret[str]
     RABBITMQ_QUEUE: str = 'instancer.jobs'
     RABBITMQ_QUEUE_SUFFIX: str | None = None
@@ -71,16 +57,22 @@ class Settings(BaseSettings):
 
     # Payment configuration
     PAYMENT_ENABLED: bool = True
-    PAYMENT_RECEIVER_WALLET: str = 'svmav8vdsLCKvDRsuiD9X4eZUWNroLFovMV9NQ9iEoL'
-    PAYMENT_SOLANA_RPC_URL: str = 'https://mainnet.helius-rpc.com/?api-key=dfa2ad47-9043-4b60-b60d-3bc1198f7489'
-    # Markup percentage on top of model costs (e.g., 0.5 = 50% markup)
     PAYMENT_MARKUP: float = 0.5
 
-    # x402 engine configuration
-    # Service wallet private key (base58 encoded) for paying x402 API calls
-    # This wallet is funded by user payments and used to pay for API calls
-    X402_SERVICE_WALLET_KEY: Secret[str] | None = None
-    X402_GATEWAY_URL: str = 'https://x402-gateway-production.up.railway.app'
+    # Solana service wallet (receives user USDC payments)
+    SOLANA_SERVICE_WALLET_ADDRESS: str = ''
+    SOLANA_RPC_URL: str = 'https://api.mainnet-beta.solana.com'
+
+    # Base service wallet (receives bridged USDC, pays Daydreams)
+    BASE_SERVICE_WALLET_ADDRESS: str = ''
+
+    # Bridge helper service URL
+    BRIDGE_HELPER_URL: str = 'http://bridgehelper:8085'
+
+    # Daydreams x402 router configuration
+    # Base (EVM) wallet private key for signing x402 permits
+    # This wallet should have USDC on Base chain
+    X402_SERVICE_KEY: Secret[str] | None = None
 
     @field_validator('RABBITMQ_QUEUE_SUFFIX', mode='before')
     @classmethod

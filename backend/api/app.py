@@ -22,12 +22,12 @@ async def lifespan(fastapi_app: FastAPI) -> AsyncIterator[None]:
     fastapi_app.state.rabbitmq = publisher
 
     # Start WebSocket listener for incoming payments
-    if settings.PAYMENT_ENABLED and settings.PAYMENT_RECEIVER_WALLET:
-        ws_url = settings.PAYMENT_SOLANA_RPC_URL.replace('https://', 'wss://')
+    if settings.PAYMENT_ENABLED and settings.SOLANA_SERVICE_WALLET_ADDRESS:
+        ws_url = settings.SOLANA_RPC_URL.replace('https://', 'wss://')
         await start_transaction_listener(
-            receiver_wallet=settings.PAYMENT_RECEIVER_WALLET,
+            receiver_wallet=settings.SOLANA_SERVICE_WALLET_ADDRESS,
             ws_url=ws_url,
-            http_rpc_url=settings.PAYMENT_SOLANA_RPC_URL,
+            http_rpc_url=settings.SOLANA_RPC_URL,
         )
 
     try:

@@ -3,7 +3,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import File, Form, HTTPException, UploadFile
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, field_validator
 
 from api.core.config import settings
 from api.models.job import JobStatus
@@ -13,50 +13,34 @@ from api.util.zip_validate import validate_upload_zip
 class StartJobFromUrlRequest(BaseModel):
     source_url: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
     model: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-    openai_key: Annotated[str | None, StringConstraints(strip_whitespace=True, min_length=1)] = None
-    provider: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] = 'openai'
     effort: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] = 'medium'
-    payment_token: Annotated[str | None, StringConstraints(strip_whitespace=True, min_length=1)] = None
-
-    @model_validator(mode='after')
-    def require_openai_key_or_payment(self) -> 'StartJobFromUrlRequest':
-        if settings.BACKEND_USE_PROXY_STATIC_KEY:
-            return self
-        # Allow payment_token as alternative to openai_key
-        if self.payment_token:
-            return self
-        if settings.BACKEND_STATIC_OAI_KEY is None and not self.openai_key:
-            msg = 'openai_key or payment_token is required'
-            raise ValueError(msg)
-        return self
+    payment_token: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
-class StartJobForm(StartJobFromUrlRequest):
+class StartJobForm(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     file: UploadFile
-    # Override source_url to make it optional (not used in file upload)
-    source_url: Annotated[str | None, StringConstraints(strip_whitespace=True, min_length=1)] = None
+    model: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    effort: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] = 'medium'
+    payment_token: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
     @classmethod
     def as_form(
         cls,
         file: Annotated[UploadFile, File()],
         model: Annotated[str, Form()],
-        openai_key: Annotated[str | None, Form()] = None,
-        provider: Annotated[str, Form()] = 'openai',
         effort: Annotated[str, Form()] = 'medium',
-        payment_token: Annotated[str | None, Form()] = None,
+        payment_token: Annotated[str, Form()] = '',
     ) -> 'StartJobForm':
         try:
-            return cls(model=model, openai_key=openai_key, provider=provider, effort=effort, payment_token=payment_token, file=file)
+            return cls(model=model, effort=effort, payment_token=payment_token, file=file)
         except ValidationError as exc:
             errors = exc.errors()
             messages = []
             for err in errors:
                 if not isinstance(err, dict):
                     continue
-
                 msg = err.get('msg', 'Invalid request')
                 if isinstance(msg, str) and msg.startswith('Value error, '):
                     msg = msg.removeprefix('Value error, ')

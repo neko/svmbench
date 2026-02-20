@@ -15,11 +15,17 @@ export const USDC_MINT = new PublicKey(
 
 export type EffortLevel = "low" | "medium" | "high"
 
-export interface X402ModelInfo {
+export interface ModelInfo {
   id: string
   name: string
-  price: number // raw x402 price per request
+  input_price: number // per 1M input tokens
+  output_price: number // per 1M output tokens
   audit_price: number // total price for audit (with markup)
+}
+
+export interface TokenBudget {
+  input_tokens: number
+  output_tokens: number
 }
 
 export interface PaymentConfig {
@@ -27,8 +33,8 @@ export interface PaymentConfig {
   receiver_wallet: string | null
   markup: number
   markup_percent: number
-  requests_per_effort: Record<EffortLevel, number> // effort -> API calls per model
-  x402_models: X402ModelInfo[] // available x402 models with full info
+  token_budgets: Record<EffortLevel, TokenBudget> // effort -> token budget
+  models: ModelInfo[] // available models with pricing
   model_prices: Record<EffortLevel, Record<string, number>> // effort -> {model -> price}
 }
 
@@ -48,7 +54,7 @@ export interface CalculatePriceResponse {
   total: number
   breakdown: Record<string, number>
   effort: EffortLevel
-  requests_per_audit: number
+  token_budget: TokenBudget
   markup_percent: number
 }
 

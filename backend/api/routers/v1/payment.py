@@ -7,20 +7,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.core.config import settings
-from api.core.const import ALLOWED_MODELS, OPENROUTER_ALLOWED_MODELS
 from api.core.deps import get_db
 from api.models.payment import Payment
 from api.util.pricing import (
-    REQUESTS_PER_AUDIT,
-    REQUESTS_PER_EFFORT,
     TOKEN_BUDGETS,
     calculate_model_price,
+    calculate_model_price_sync,
     calculate_total_price,
-    get_all_model_prices,
     get_pricing_breakdown,
     get_x402_models,
     get_x402_pricing,
-    calculate_model_price_sync,
 )
 from api.util.solana import verify_usdc_transfer
 
@@ -29,10 +25,11 @@ SessionDep = Annotated[AsyncSession, Depends(get_db)]
 router = APIRouter(prefix='/payment', tags=['payment'])
 
 
-class X402ModelInfo(BaseModel):
+class ModelInfo(BaseModel):
     id: str
     name: str
-    price: float  # raw x402 price per request
+    input_price: float  # per 1M input tokens
+    output_price: float  # per 1M output tokens
     audit_price: float  # total price for audit (with markup)
 
 
@@ -41,8 +38,8 @@ class PaymentConfigResponse(BaseModel):
     receiver_wallet: str | None
     markup: float
     markup_percent: int
-    requests_per_effort: dict[str, int]  # effort -> API calls per model
-    x402_models: list[X402ModelInfo]  # available x402 models with full info
+    token_budgets: dict[str, dict[str, int]]  # effort -> {input_tokens, output_tokens}
+    models: list[ModelInfo]  # available models with pricing
     model_prices: dict[str, dict[str, float]]  # effort -> {model -> price}
 
 
@@ -55,7 +52,7 @@ class CalculatePriceResponse(BaseModel):
     total: float
     breakdown: dict[str, float]  # model -> price
     effort: str
-    requests_per_audit: int
+    token_budget: dict[str, int]  # input_tokens, output_tokens
     markup_percent: int
 
 
@@ -74,32 +71,32 @@ class VerifyPaymentResponse(BaseModel):
 
 @router.get('/config')
 async def get_payment_config() -> PaymentConfigResponse:
-    """Get payment configuration including per-model pricing from x402 engine.
+    """Get payment configuration including per-model pricing from Daydreams router.
 
-    x402 uses flat per-request pricing. API calls vary by effort level:
-    - low: 2 calls (file_select + basic_scan)
-    - medium: 3 calls (file_select + thorough_scan + deep_dive)
-    - high: 7 calls (multiple focused scans + verification)
+    Daydreams uses token-based pricing. Token budgets vary by effort level:
+    - low: ~50k input, ~10k output
+    - medium: ~150k input, ~30k output
+    - high: ~300k input, ~60k output
 
-    Price = x402_model_price × requests_per_effort × (1 + markup)
+    Price = (input_tokens * input_price/1M) + (output_tokens * output_price/1M) * (1 + markup)
 
-    Models are fetched dynamically from x402 discovery endpoint.
+    Models are fetched dynamically from Daydreams router.
     """
-    # Fetch models and prices from x402 discovery
-    x402_models_raw = await get_x402_models()
-    x402_prices = await get_x402_pricing()
+    # Fetch models and prices from Daydreams
+    models_raw = await get_x402_models()
+    pricing = await get_x402_pricing()
 
     # Build model info list with audit prices (using medium as default display price)
-    x402_models: list[X402ModelInfo] = []
+    models: list[ModelInfo] = []
 
-    for model in x402_models_raw:
+    for model in models_raw:
         model_id = model['id']
-        # Use medium effort for the default displayed price
-        audit_price = calculate_model_price_sync(model_id, x402_prices, effort='medium')
-        x402_models.append(X402ModelInfo(
+        audit_price = calculate_model_price_sync(model_id, pricing, effort='medium')
+        models.append(ModelInfo(
             id=model_id,
             name=model['name'],
-            price=model['price'],
+            input_price=model.get('input_price', 0),
+            output_price=model.get('output_price', 0),
             audit_price=audit_price,
         ))
 
@@ -107,17 +104,17 @@ async def get_payment_config() -> PaymentConfigResponse:
     model_prices: dict[str, dict[str, float]] = {}
     for effort in ['low', 'medium', 'high']:
         model_prices[effort] = {}
-        for model in x402_models_raw:
+        for model in models_raw:
             model_id = model['id']
-            model_prices[effort][model_id] = calculate_model_price_sync(model_id, x402_prices, effort=effort)
+            model_prices[effort][model_id] = calculate_model_price_sync(model_id, pricing, effort=effort)
 
     return PaymentConfigResponse(
         enabled=settings.PAYMENT_ENABLED,
-        receiver_wallet=settings.PAYMENT_RECEIVER_WALLET,
+        receiver_wallet=settings.SOLANA_SERVICE_WALLET_ADDRESS,
         markup=settings.PAYMENT_MARKUP,
         markup_percent=int(settings.PAYMENT_MARKUP * 100),
-        requests_per_effort=REQUESTS_PER_EFFORT,
-        x402_models=x402_models,
+        token_budgets=TOKEN_BUDGETS,
+        models=models,
         model_prices=model_prices,
     )
 
@@ -126,8 +123,8 @@ async def get_payment_config() -> PaymentConfigResponse:
 async def calc_price_endpoint(request: CalculatePriceRequest) -> CalculatePriceResponse:
     """Calculate price for specific models and effort level.
 
-    x402 uses flat per-request pricing.
-    Price = x402_price × requests_for_effort × (1 + markup)
+    Daydreams uses token-based pricing.
+    Price = (input_tokens * input_price/1M) + (output_tokens * output_price/1M) * (1 + markup)
     """
     breakdown = {}
     for model in request.models:
@@ -139,7 +136,7 @@ async def calc_price_endpoint(request: CalculatePriceRequest) -> CalculatePriceR
         total=total,
         breakdown=breakdown,
         effort=request.effort,
-        requests_per_audit=REQUESTS_PER_EFFORT.get(request.effort, 3),
+        token_budget=TOKEN_BUDGETS.get(request.effort, TOKEN_BUDGETS['medium']),
         markup_percent=int(settings.PAYMENT_MARKUP * 100),
     )
 
@@ -158,7 +155,7 @@ async def verify_payment(
     if not settings.PAYMENT_ENABLED:
         raise HTTPException(status_code=400, detail='Payments are not enabled')
 
-    if not settings.PAYMENT_RECEIVER_WALLET:
+    if not settings.SOLANA_SERVICE_WALLET_ADDRESS:
         raise HTTPException(status_code=500, detail='Payment receiver wallet not configured')
 
     if not request.model:
@@ -178,9 +175,9 @@ async def verify_payment(
         is_valid = await verify_usdc_transfer(
             signature=request.signature,
             expected_sender=request.payer_wallet,
-            expected_receiver=settings.PAYMENT_RECEIVER_WALLET,
+            expected_receiver=settings.SOLANA_SERVICE_WALLET_ADDRESS,
             expected_amount=request.amount,
-            rpc_url=settings.PAYMENT_SOLANA_RPC_URL,
+            rpc_url=settings.SOLANA_RPC_URL,
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=f'Failed to verify transaction: {e}') from e

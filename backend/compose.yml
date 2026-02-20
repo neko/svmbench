@@ -80,50 +80,6 @@ services:
       - db
       - shared_network
 
-  x402helper:
-    profiles: ["proxy"]
-    build:
-      dockerfile: x402helper/Dockerfile
-      context: .
-    container_name: x402helper
-    restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      X402_HELPER_PORT: 8085
-      X402_SERVICE_WALLET_KEY: ${X402_SERVICE_WALLET_KEY:-}
-      SOLANA_RPC_URL: ${PAYMENT_SOLANA_RPC_URL:-https://api.mainnet-beta.solana.com}
-    networks:
-      - app
-
-  oai_proxy:
-    profiles: ["proxy"]
-    image: svmbench/backend:latest
-    build:
-      dockerfile: docker/backend/Dockerfile
-      context: .
-    command: ["python", "-m", "oai_proxy"]
-    container_name: oai-proxy
-    restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      OAI_PROXY_HOST: 0.0.0.0
-      OAI_PROXY_PORT: 8084
-      # Required only when running with profile "proxy"
-      OAI_PROXY_AES_KEY: ${OAI_PROXY_AES_KEY:-}
-      # x402 helper service URL
-      X402_HELPER_URL: http://x402helper:8085
-    depends_on:
-      - x402helper
-    ports:
-      - "127.0.0.1:8084:8084"
-    networks:
-      shared_network:
-        aliases:
-          - oai.loc
-      app:
-
   backend:
     image: svmbench/backend:latest
     build:
@@ -185,8 +141,6 @@ services:
       INSTANCER_SECRETS_TOKEN_RO: ${SECRETS_TOKEN_RO:?set SECRETS_TOKEN_RO}
       INSTANCER_RESULTSVC_HOST: resultsvc
       INSTANCER_RESULTSVC_PORT: 8083
-      # Optional: only required for proxy-token mode
-      INSTANCER_OAI_PROXY_BASE_URL: ${OAI_PROXY_BASE_URL:-}
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -225,6 +179,25 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - db
+
+  bridgehelper:
+    profiles: ["bridge"]
+    build:
+      context: ./bridgehelper
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      BRIDGE_HELPER_PORT: 8085
+      SOLANA_SERVICE_WALLET_ADDRESS: ${SOLANA_SERVICE_WALLET_ADDRESS:?set SOLANA_SERVICE_WALLET_ADDRESS}
+      SOLANA_SERVICE_WALLET_KEY: ${SOLANA_SERVICE_WALLET_KEY:?set SOLANA_SERVICE_WALLET_KEY}
+      BASE_SERVICE_WALLET_ADDRESS: ${BASE_SERVICE_WALLET_ADDRESS:?set BASE_SERVICE_WALLET_ADDRESS}
+      BASE_SERVICE_WALLET_KEY: ${BASE_SERVICE_WALLET_KEY:-}
+      SOLANA_RPC_URL: ${SOLANA_RPC_URL:-https://api.mainnet-beta.solana.com}
+      BASE_RPC_URL: ${BASE_RPC_URL:-https://mainnet.base.org}
+    networks:
+      - app
 
 networks:
   app:

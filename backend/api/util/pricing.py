@@ -4,12 +4,13 @@ Pricing calculation for x402 engine pay-per-request LLM access.
 x402 uses FLAT per-request pricing - each API call costs a fixed amount
 regardless of tokens used. Different models have different prices.
 
-Our two-phase audit makes exactly 2 API calls per model:
-1. Phase 1: Ask which files to read
-2. Phase 2: Analyze all requested files
+API calls vary by effort level:
+- Low (2 phases): file_select + basic_scan
+- Medium (3 phases): file_select + thorough_scan + deep_dive
+- High (7 phases): file_select + thorough_scan + access_control + state_handling + arithmetic + deep_dive + verify
 
 Price calculation:
-  total = sum(model_price * REQUESTS_PER_AUDIT * (1 + markup) for each model)
+  total = sum(model_price * requests_for_effort * (1 + markup) for each model)
 """
 
 import asyncio
@@ -25,7 +26,14 @@ from api.core.config import settings
 X402_DISCOVERY_URL = 'https://x402engine.app/.well-known/x402.json'
 X402_BASE_URL = 'https://x402-gateway-production.up.railway.app'
 
-# Fixed number of API requests per audit (two-phase approach)
+# API requests per audit based on effort level
+REQUESTS_PER_EFFORT: dict[str, int] = {
+    'low': 2,      # file_select + basic_scan
+    'medium': 3,   # file_select + thorough_scan + deep_dive
+    'high': 7,     # file_select + thorough_scan + 3 focused scans + deep_dive + verify
+}
+
+# Default for backwards compatibility
 REQUESTS_PER_AUDIT = 2
 
 # Cache for x402 pricing: x402_model_id -> price_per_request
@@ -237,16 +245,20 @@ def get_model_request_price(our_model: str, x402_prices: dict[str, float]) -> fl
 def calculate_model_price_sync(
     model: str,
     x402_prices: dict[str, float],
+    effort: str = 'medium',
 ) -> float:
     """
     Calculate the total price for one model's audit.
 
-    Price = request_price × REQUESTS_PER_AUDIT × (1 + markup)
+    Price = request_price × requests_for_effort × (1 + markup)
     """
     request_price = get_model_request_price(model, x402_prices)
 
-    # Base cost for the audit (2 API calls)
-    base_cost = request_price * REQUESTS_PER_AUDIT
+    # Get number of API calls for this effort level
+    num_requests = REQUESTS_PER_EFFORT.get(effort, REQUESTS_PER_EFFORT['medium'])
+
+    # Base cost for the audit
+    base_cost = request_price * num_requests
 
     # Apply markup
     markup = settings.PAYMENT_MARKUP
@@ -258,16 +270,14 @@ def calculate_model_price_sync(
 
 async def calculate_model_price(model: str, effort: str = 'medium') -> float:
     """Calculate price for a single model's audit."""
-    # Note: effort parameter kept for API compatibility but not used
-    # x402 pricing is per-request, not per-token, so effort doesn't change cost
     x402_prices = await get_x402_pricing()
-    return calculate_model_price_sync(model, x402_prices)
+    return calculate_model_price_sync(model, x402_prices, effort)
 
 
 async def calculate_total_price(models: list[str], effort: str = 'medium') -> float:
     """Calculate total price for auditing with multiple models."""
     x402_prices = await get_x402_pricing()
-    total = sum(calculate_model_price_sync(model, x402_prices) for model in models)
+    total = sum(calculate_model_price_sync(model, x402_prices, effort) for model in models)
     return round(total, 2)
 
 
@@ -280,18 +290,19 @@ async def get_all_model_prices(effort: str = 'medium') -> dict[str, float]:
 
     all_models = list(ALLOWED_MODELS) + list(OPENROUTER_ALLOWED_MODELS)
     for model in all_models:
-        prices[model] = calculate_model_price_sync(model, x402_prices)
+        prices[model] = calculate_model_price_sync(model, x402_prices, effort)
 
     return prices
 
 
-async def get_pricing_breakdown(models: list[str]) -> dict:
+async def get_pricing_breakdown(models: list[str], effort: str = 'medium') -> dict:
     """
     Get detailed pricing breakdown for display.
 
     Returns:
         {
             'models': {model: {'x402_id': x, 'price_per_request': p, 'requests': n, 'subtotal': y}},
+            'effort': effort,
             'requests_per_audit': n,
             'markup_percent': x,
             'total_before_markup': x,
@@ -300,10 +311,12 @@ async def get_pricing_breakdown(models: list[str]) -> dict:
     """
     x402_prices = await get_x402_pricing()
     markup = settings.PAYMENT_MARKUP
+    num_requests = REQUESTS_PER_EFFORT.get(effort, REQUESTS_PER_EFFORT['medium'])
 
     breakdown = {
         'models': {},
-        'requests_per_audit': REQUESTS_PER_AUDIT,
+        'effort': effort,
+        'requests_per_audit': num_requests,
         'markup_percent': int(markup * 100),
         'total_before_markup': 0.0,
         'total': 0.0,
@@ -312,13 +325,13 @@ async def get_pricing_breakdown(models: list[str]) -> dict:
     for model in models:
         x402_id = get_x402_model_id(model)
         request_price = get_model_request_price(model, x402_prices)
-        subtotal_before_markup = request_price * REQUESTS_PER_AUDIT
+        subtotal_before_markup = request_price * num_requests
         subtotal = subtotal_before_markup * (1 + markup)
 
         breakdown['models'][model] = {
             'x402_model_id': x402_id,
             'price_per_request': round(request_price, 4),
-            'requests': REQUESTS_PER_AUDIT,
+            'requests': num_requests,
             'subtotal_before_markup': round(subtotal_before_markup, 4),
             'subtotal': round(subtotal, 2),
         }
@@ -345,9 +358,4 @@ TOKEN_BUDGETS = {
     'high': {'input_tokens': 300_000, 'output_tokens': 60_000},
 }
 
-# With x402 per-request pricing, all effort levels use same number of requests
-REQUESTS_PER_EFFORT = {
-    'low': REQUESTS_PER_AUDIT,
-    'medium': REQUESTS_PER_AUDIT,
-    'high': REQUESTS_PER_AUDIT,
-}
+# Note: REQUESTS_PER_EFFORT is now defined at module top level with actual values

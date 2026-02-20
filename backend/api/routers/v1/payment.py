@@ -41,18 +41,20 @@ class PaymentConfigResponse(BaseModel):
     receiver_wallet: str | None
     markup: float
     markup_percent: int
-    requests_per_audit: int  # fixed 2 requests per model audit
+    requests_per_effort: dict[str, int]  # effort -> API calls per model
     x402_models: list[X402ModelInfo]  # available x402 models with full info
-    model_prices: dict[str, float]  # model -> total price (includes markup)
+    model_prices: dict[str, dict[str, float]]  # effort -> {model -> price}
 
 
 class CalculatePriceRequest(BaseModel):
     models: list[str]
+    effort: Literal['low', 'medium', 'high'] = 'medium'
 
 
 class CalculatePriceResponse(BaseModel):
     total: float
     breakdown: dict[str, float]  # model -> price
+    effort: str
     requests_per_audit: int
     markup_percent: int
 
@@ -74,8 +76,12 @@ class VerifyPaymentResponse(BaseModel):
 async def get_payment_config() -> PaymentConfigResponse:
     """Get payment configuration including per-model pricing from x402 engine.
 
-    x402 uses flat per-request pricing. Each audit makes 2 API calls per model.
-    Price = x402_model_price × 2 × (1 + markup)
+    x402 uses flat per-request pricing. API calls vary by effort level:
+    - low: 2 calls (file_select + basic_scan)
+    - medium: 3 calls (file_select + thorough_scan + deep_dive)
+    - high: 7 calls (multiple focused scans + verification)
+
+    Price = x402_model_price × requests_per_effort × (1 + markup)
 
     Models are fetched dynamically from x402 discovery endpoint.
     """
@@ -83,27 +89,34 @@ async def get_payment_config() -> PaymentConfigResponse:
     x402_models_raw = await get_x402_models()
     x402_prices = await get_x402_pricing()
 
-    # Build model info list with audit prices
+    # Build model info list with audit prices (using medium as default display price)
     x402_models: list[X402ModelInfo] = []
-    model_prices: dict[str, float] = {}
 
     for model in x402_models_raw:
         model_id = model['id']
-        audit_price = calculate_model_price_sync(model_id, x402_prices)
+        # Use medium effort for the default displayed price
+        audit_price = calculate_model_price_sync(model_id, x402_prices, effort='medium')
         x402_models.append(X402ModelInfo(
             id=model_id,
             name=model['name'],
             price=model['price'],
             audit_price=audit_price,
         ))
-        model_prices[model_id] = audit_price
+
+    # Build prices for all effort levels
+    model_prices: dict[str, dict[str, float]] = {}
+    for effort in ['low', 'medium', 'high']:
+        model_prices[effort] = {}
+        for model in x402_models_raw:
+            model_id = model['id']
+            model_prices[effort][model_id] = calculate_model_price_sync(model_id, x402_prices, effort=effort)
 
     return PaymentConfigResponse(
         enabled=settings.PAYMENT_ENABLED,
         receiver_wallet=settings.PAYMENT_RECEIVER_WALLET,
         markup=settings.PAYMENT_MARKUP,
         markup_percent=int(settings.PAYMENT_MARKUP * 100),
-        requests_per_audit=REQUESTS_PER_AUDIT,
+        requests_per_effort=REQUESTS_PER_EFFORT,
         x402_models=x402_models,
         model_prices=model_prices,
     )
@@ -111,20 +124,22 @@ async def get_payment_config() -> PaymentConfigResponse:
 
 @router.post('/calculate')
 async def calc_price_endpoint(request: CalculatePriceRequest) -> CalculatePriceResponse:
-    """Calculate price for specific models.
+    """Calculate price for specific models and effort level.
 
-    x402 uses flat per-request pricing. Price = x402_price × 2 × (1 + markup)
+    x402 uses flat per-request pricing.
+    Price = x402_price × requests_for_effort × (1 + markup)
     """
     breakdown = {}
     for model in request.models:
-        breakdown[model] = await calculate_model_price(model)
+        breakdown[model] = await calculate_model_price(model, request.effort)
 
-    total = await calculate_total_price(request.models)
+    total = await calculate_total_price(request.models, request.effort)
 
     return CalculatePriceResponse(
         total=total,
         breakdown=breakdown,
-        requests_per_audit=REQUESTS_PER_AUDIT,
+        effort=request.effort,
+        requests_per_audit=REQUESTS_PER_EFFORT.get(request.effort, 3),
         markup_percent=int(settings.PAYMENT_MARKUP * 100),
     )
 
@@ -132,7 +147,7 @@ async def calc_price_endpoint(request: CalculatePriceRequest) -> CalculatePriceR
 @router.post('/breakdown')
 async def get_price_breakdown(request: CalculatePriceRequest) -> dict:
     """Get detailed pricing breakdown showing x402 costs."""
-    return await get_pricing_breakdown(request.models)
+    return await get_pricing_breakdown(request.models, request.effort)
 
 
 @router.post('/verify')
@@ -156,8 +171,8 @@ async def verify_payment(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail='Payment signature already used')
 
-    # Calculate expected price based on models (x402 flat per-request pricing)
-    expected_amount = await calculate_total_price(request.models)
+    # Calculate expected price based on models and effort (x402 flat per-request pricing)
+    expected_amount = await calculate_total_price(request.models, request.effort)
 
     try:
         is_valid = await verify_usdc_transfer(

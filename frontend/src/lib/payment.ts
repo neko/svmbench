@@ -27,9 +27,9 @@ export interface PaymentConfig {
   receiver_wallet: string | null
   markup: number
   markup_percent: number
-  requests_per_audit: number
+  requests_per_effort: Record<EffortLevel, number> // effort -> API calls per model
   x402_models: X402ModelInfo[] // available x402 models with full info
-  model_prices: Record<string, number> // model -> total price (includes markup)
+  model_prices: Record<EffortLevel, Record<string, number>> // effort -> {model -> price}
 }
 
 export async function fetchPaymentConfig(): Promise<PaymentConfig> {
@@ -47,19 +47,21 @@ export async function fetchPaymentConfig(): Promise<PaymentConfig> {
 export interface CalculatePriceResponse {
   total: number
   breakdown: Record<string, number>
+  effort: EffortLevel
   requests_per_audit: number
   markup_percent: number
 }
 
 export async function calculatePrice(
   models: string[],
+  effort: EffortLevel = "medium",
 ): Promise<CalculatePriceResponse> {
   const response = await fetch(`${API_BASE}/v1/payment/calculate`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ models }),
+    body: JSON.stringify({ models, effort }),
   })
 
   if (!response.ok) {
@@ -160,14 +162,20 @@ export async function verifyPayment(
 }
 
 // Client-side price calculation from cached config (for quick UI updates)
-// x402 uses flat per-request pricing, so just sum the model prices
+// x402 uses flat per-request pricing, price varies by effort level
 export function calculatePriceFromConfig(
   config: PaymentConfig,
   models: string[],
+  effort: EffortLevel = "medium",
 ): number {
+  const effortPrices = config.model_prices[effort]
+  if (!effortPrices) {
+    return 0
+  }
+
   let total = 0
   for (const model of models) {
-    const price = config.model_prices[model]
+    const price = effortPrices[model]
     if (price !== undefined) {
       total += price
     }

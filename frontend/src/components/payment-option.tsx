@@ -76,9 +76,9 @@ export function PaymentOption({
   const isPhantom = wallet?.adapter.name === 'Phantom'
   const isSolflare = wallet?.adapter.name === 'Solflare'
 
-  // Quick client-side price from config
+  // Quick client-side price from config (effort-aware)
   const quickPrice = paymentConfig
-    ? calculatePriceFromConfig(paymentConfig, models)
+    ? calculatePriceFromConfig(paymentConfig, models, effort)
     : 0
 
   const displayPrice = serverPrice ?? quickPrice
@@ -96,7 +96,7 @@ export function PaymentOption({
     }
   }, [provider])
 
-  // Fetch price when models change (x402 only)
+  // Fetch price when models or effort changes (x402 only)
   useEffect(() => {
     if (provider !== 'x402' || !paymentConfig?.enabled || models.length === 0) {
       setServerPrice(null)
@@ -104,11 +104,11 @@ export function PaymentOption({
     }
 
     setIsLoadingPrice(true)
-    calculatePrice(models)
+    calculatePrice(models, effort)
       .then((result) => setServerPrice(result.total))
       .catch(() => setServerPrice(null))
       .finally(() => setIsLoadingPrice(false))
-  }, [models, paymentConfig?.enabled, provider])
+  }, [models, effort, paymentConfig?.enabled, provider])
 
   // Reset payment state when models change
   useEffect(() => {

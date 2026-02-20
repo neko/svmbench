@@ -35,10 +35,18 @@ JOB_ID = os.getenv('JOB_ID', 'job').strip()
 MODEL_KEY = os.getenv('AGENT_ID', '').strip()
 
 RUNNER_DIR = Path(os.getenv('SVM_BENCH_RUNNER_DIR') or '/opt/svmbench/worker_runner')
-DETECT_MD_PATH = RUNNER_DIR / 'detect.md'
 MODEL_MAP_PATH = RUNNER_DIR / 'model_map.json'
 CODEX_RUNNER_SH = RUNNER_DIR / 'run_codex_detect.sh'
 X402_RUNNER_PY = RUNNER_DIR / 'run_x402_audit.py'
+
+# Effort-specific detection prompts
+DETECT_MD_PATHS: dict[str, Path] = {
+    'low': RUNNER_DIR / 'detect_low.md',
+    'medium': RUNNER_DIR / 'detect_medium.md',
+    'high': RUNNER_DIR / 'detect_high.md',
+}
+# Fallback to medium if specific effort file doesn't exist
+DETECT_MD_DEFAULT = RUNNER_DIR / 'detect.md'
 
 EFFORT_TIMEOUTS: dict[str, int] = {
     'low': 120,      # 2 minutes
@@ -231,9 +239,6 @@ def _run_codex_detect(*, openai_token: str, key_mode: str, provider: str = 'open
     if key_mode in {'proxy', 'proxy_static'}:
         _write_codex_proxy_config(home=AGENT_DIR, provider=provider)
 
-    if not DETECT_MD_PATH.exists():
-        msg = f'Missing detect instructions: {DETECT_MD_PATH}'
-        raise RuntimeError(msg)
     if not CODEX_RUNNER_SH.exists():
         msg = f'Missing Codex runner: {CODEX_RUNNER_SH}'
         raise RuntimeError(msg)
@@ -243,8 +248,17 @@ def _run_codex_detect(*, openai_token: str, key_mode: str, provider: str = 'open
     env['SVM_BENCH_CODEX_TIMEOUT_SECONDS'] = str(timeout_seconds)
     logger.info(f'Effort={effort}, timeout={timeout_seconds}s')
 
-    # Use the standard detect.md for all effort levels (full autonomy).
-    env['SVM_BENCH_DETECT_MD'] = str(DETECT_MD_PATH)
+    # Use effort-specific detect.md for deeper analysis at higher effort levels.
+    detect_md_path = DETECT_MD_PATHS.get(effort)
+    if detect_md_path and detect_md_path.exists():
+        env['SVM_BENCH_DETECT_MD'] = str(detect_md_path)
+        logger.info(f'Using effort-specific prompt: {detect_md_path.name}')
+    elif DETECT_MD_DEFAULT.exists():
+        env['SVM_BENCH_DETECT_MD'] = str(DETECT_MD_DEFAULT)
+        logger.info(f'Using default prompt: {DETECT_MD_DEFAULT.name}')
+    else:
+        msg = f'Missing detect instructions for effort={effort}'
+        raise RuntimeError(msg)
 
     model_map = _load_model_map()
     model = _resolve_codex_model(model_key=MODEL_KEY, model_map=model_map)
@@ -274,13 +288,14 @@ def _run_codex_detect(*, openai_token: str, key_mode: str, provider: str = 'open
 
 
 def _run_x402_audit(*, openai_token: str, effort: str = 'medium') -> Path:
-    """Run two-phase audit using x402 API (or proxy in x402 mode)."""
+    """Run multi-phase audit using x402 API (or proxy in x402 mode)."""
     env = os.environ.copy()
     env['OPENAI_API_KEY'] = openai_token
     env['HOME'] = str(AGENT_DIR)
     env['AGENT_DIR'] = str(AGENT_DIR)
     env['SUBMISSION_DIR'] = str(SUBMISSION_DIR)
     env['LOGS_DIR'] = str(LOGS_DIR)
+    env['AUDIT_EFFORT'] = effort  # Pass effort level to runner
 
     # Set base URL to proxy (which handles x402 payments)
     if OAI_PROXY_BASE_URL:

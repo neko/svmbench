@@ -126,6 +126,8 @@ services:
       BACKEND_SECRETS_BACKEND_ARGUMENTS: >
         {"url":"http://secretsvc:8081","token":"${SECRETS_TOKEN_WO:?set SECRETS_TOKEN_WO}"}
       RABBITMQ_DSN: amqp://${RABBITMQ_USER:-svmbench}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+    volumes:
+      - ./public_sources:/app/public_sources
     ports:
       - "127.0.0.1:${BACKEND_WEB_PORT:-1337}:1337"
     depends_on:

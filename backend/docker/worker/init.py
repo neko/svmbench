@@ -124,7 +124,7 @@ def _run_audit(*, x402_key: str, model: str, effort: str) -> Path:
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
-        timeout=timeout + 60,
+        timeout=AUDIT_TIMEOUT + 60,
         check=False,
     )
     (LOGS_DIR / 'runner.log').write_text(proc.stdout or '', encoding='utf-8')

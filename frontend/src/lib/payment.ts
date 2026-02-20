@@ -1,6 +1,8 @@
 import {
+  createAssociatedTokenAccountInstruction,
   createTransferInstruction,
   getAssociatedTokenAddress,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
 } from "@solana/spl-token"
 import { Connection, PublicKey, Transaction } from "@solana/web3.js"
@@ -78,6 +80,21 @@ export async function createPaymentTransaction(
   const amountLamports = Math.floor(amount * 1_000_000)
 
   const transaction = new Transaction()
+
+  // Check if receiver's ATA exists, if not create it
+  const receiverAtaInfo = await connection.getAccountInfo(receiverAta)
+  if (!receiverAtaInfo) {
+    transaction.add(
+      createAssociatedTokenAccountInstruction(
+        payerPublicKey, // payer
+        receiverAta, // ata address
+        receiverPublicKey, // owner
+        USDC_MINT, // mint
+        TOKEN_PROGRAM_ID,
+        ASSOCIATED_TOKEN_PROGRAM_ID,
+      ),
+    )
+  }
 
   // Add transfer instruction
   transaction.add(

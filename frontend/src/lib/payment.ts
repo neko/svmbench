@@ -13,18 +13,13 @@ export const USDC_MINT = new PublicKey(
 
 export type EffortLevel = "low" | "medium" | "high"
 
-export interface TokenBudget {
-  input_tokens: number
-  output_tokens: number
-}
-
 export interface PaymentConfig {
   enabled: boolean
   receiver_wallet: string | null
   markup: number
-  model_prices: Record<string, Record<EffortLevel, number>>
-  token_budgets: Record<EffortLevel, TokenBudget>
-  requests_per_effort: Record<EffortLevel, number>
+  markup_percent: number
+  requests_per_audit: number
+  model_prices: Record<string, number> // model -> total price (includes markup)
 }
 
 export async function fetchPaymentConfig(): Promise<PaymentConfig> {
@@ -42,18 +37,19 @@ export async function fetchPaymentConfig(): Promise<PaymentConfig> {
 export interface CalculatePriceResponse {
   total: number
   breakdown: Record<string, number>
+  requests_per_audit: number
+  markup_percent: number
 }
 
 export async function calculatePrice(
   models: string[],
-  effort: EffortLevel,
 ): Promise<CalculatePriceResponse> {
   const response = await fetch(`${API_BASE}/v1/payment/calculate`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ models, effort }),
+    body: JSON.stringify({ models }),
   })
 
   if (!response.ok) {
@@ -110,7 +106,7 @@ export interface VerifyPaymentRequest {
   payer_wallet: string
   amount: number
   models: string[]
-  effort: EffortLevel
+  effort: EffortLevel // kept for compatibility
 }
 
 export interface VerifyPaymentResponse {
@@ -139,27 +135,17 @@ export async function verifyPayment(
 }
 
 // Client-side price calculation from cached config (for quick UI updates)
+// x402 uses flat per-request pricing, so just sum the model prices
 export function calculatePriceFromConfig(
   config: PaymentConfig,
   models: string[],
-  effort: EffortLevel,
 ): number {
   let total = 0
   for (const model of models) {
-    const modelPrices = config.model_prices[model]
-    if (modelPrices) {
-      total += modelPrices[effort] || 0
+    const price = config.model_prices[model]
+    if (price !== undefined) {
+      total += price
     }
   }
   return Math.round(total * 100) / 100
-}
-
-export function formatTokenCount(count: number): string {
-  if (count >= 1_000_000) {
-    return `${(count / 1_000_000).toFixed(1)}M`
-  }
-  if (count >= 1_000) {
-    return `${(count / 1_000).toFixed(0)}K`
-  }
-  return count.toString()
 }

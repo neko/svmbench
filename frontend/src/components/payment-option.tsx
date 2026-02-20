@@ -11,7 +11,6 @@ import {
   calculatePriceFromConfig,
   createPaymentTransaction,
   fetchPaymentConfig,
-  formatTokenCount,
   verifyPayment,
   type EffortLevel,
   type PaymentConfig,
@@ -55,16 +54,13 @@ export function PaymentOption({
   const [isLoadingPrice, setIsLoadingPrice] = useState(false)
 
   // Quick client-side price (from cached config)
+  // x402 uses flat per-request pricing, no effort modifier
   const quickPrice = paymentConfig
-    ? calculatePriceFromConfig(paymentConfig, models, effort)
+    ? calculatePriceFromConfig(paymentConfig, models)
     : 0
 
   // Use server price if available, otherwise quick price
   const displayPrice = serverPrice ?? quickPrice
-
-  // Budget for current effort level
-  const tokenBudget = paymentConfig?.token_budgets?.[effort]
-  const requestBudget = paymentConfig?.requests_per_effort?.[effort]
 
   // Fetch payment config on mount
   useEffect(() => {
@@ -81,7 +77,7 @@ export function PaymentOption({
       })
   }, [])
 
-  // Fetch accurate price from server when models/effort change
+  // Fetch accurate price from server when models change
   useEffect(() => {
     if (!paymentConfig?.enabled || models.length === 0) {
       setServerPrice(null)
@@ -89,7 +85,7 @@ export function PaymentOption({
     }
 
     setIsLoadingPrice(true)
-    calculatePrice(models, effort)
+    calculatePrice(models)
       .then((result) => {
         setServerPrice(result.total)
       })
@@ -99,13 +95,13 @@ export function PaymentOption({
       .finally(() => {
         setIsLoadingPrice(false)
       })
-  }, [models, effort, paymentConfig?.enabled])
+  }, [models, paymentConfig?.enabled])
 
-  // Reset payment success when models or effort changes
+  // Reset payment success when models changes
   useEffect(() => {
     setPaymentSuccess(false)
     setPaymentError(null)
-  }, [models, effort])
+  }, [models])
 
   const handleConnectWallet = useCallback(() => {
     setVisible(true)
@@ -156,7 +152,7 @@ export function PaymentOption({
         payer_wallet: publicKey.toBase58(),
         amount: priceToCharge,
         models,
-        effort,
+        effort, // kept for compatibility
       })
 
       if (result.valid) {
@@ -242,16 +238,16 @@ export function PaymentOption({
         <div className="space-y-2">
           <div className="flex items-center justify-between text-xs">
             <span className="text-muted-foreground">
-              {models.length} model{models.length !== 1 ? "s" : ""} ({effort})
+              {models.length} model{models.length !== 1 ? "s" : ""}
             </span>
             <span className="font-medium text-foreground">
               {isLoadingPrice ? "..." : `$${displayPrice.toFixed(2)} USDC`}
             </span>
           </div>
 
-          {requestBudget && (
+          {paymentConfig.requests_per_audit && (
             <div className="text-xs text-muted-foreground/70">
-              ~{requestBudget} API requests per model
+              {paymentConfig.requests_per_audit} API calls per model ({paymentConfig.markup_percent}% markup)
             </div>
           )}
 

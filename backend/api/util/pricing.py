@@ -1,13 +1,19 @@
 """
-Pricing calculation based on x402 engine per-request costs.
+Pricing calculation for x402 engine pay-per-request LLM access.
 
-x402 engine provides pay-per-call LLM access via HTTP 402 payments.
-Pricing is per-request, not per-token. We estimate requests per effort level.
+x402 uses FLAT per-request pricing - each API call costs a fixed amount
+regardless of tokens used. Different models have different prices.
+
+Our two-phase audit makes exactly 2 API calls per model:
+1. Phase 1: Ask which files to read
+2. Phase 2: Analyze all requested files
+
+Price calculation:
+  total = sum(model_price * REQUESTS_PER_AUDIT * (1 + markup) for each model)
 """
 
 import asyncio
 from datetime import datetime, timedelta
-from typing import TypedDict
 
 import httpx
 from loguru import logger
@@ -15,63 +21,69 @@ from loguru import logger
 from api.core.config import settings
 
 
-class X402ModelPricing(TypedDict):
-    price_per_request: float  # cost per API request in USD
-    endpoint: str             # x402 API endpoint
-
-
-# Token budgets per effort level - informational for users
-# These represent rough token limits the audit can use
-TOKEN_BUDGETS = {
-    'low': {
-        'input_tokens': 50_000,
-        'output_tokens': 10_000,
-    },
-    'medium': {
-        'input_tokens': 150_000,
-        'output_tokens': 30_000,
-    },
-    'high': {
-        'input_tokens': 300_000,
-        'output_tokens': 60_000,
-    },
-}
-
-# Estimated API requests per effort level
-# Higher effort = more agent iterations = more API calls
-REQUESTS_PER_EFFORT = {
-    'low': 5,      # minimal investigation
-    'medium': 15,  # moderate depth
-    'high': 40,    # thorough audit
-}
-
-# x402 engine base URL
-X402_BASE_URL = 'https://x402-gateway-production.up.railway.app'
+# x402 discovery endpoint
 X402_DISCOVERY_URL = 'https://x402engine.app/.well-known/x402.json'
+X402_BASE_URL = 'https://x402-gateway-production.up.railway.app'
 
-# Cache for x402 pricing
-_x402_pricing_cache: dict[str, X402ModelPricing] = {}
+# Fixed number of API requests per audit (two-phase approach)
+REQUESTS_PER_AUDIT = 2
+
+# Cache for x402 pricing: x402_model_id -> price_per_request
+_x402_cache: dict[str, float] = {}
 _x402_cache_timestamp: datetime | None = None
 _x402_cache_lock = asyncio.Lock()
 X402_CACHE_TTL = timedelta(hours=1)
 
-# Model ID mapping: our model names -> x402 model IDs
-MODEL_TO_X402 = {
-    # OpenAI Codex models
+# Map our model names to x402 model IDs
+MODEL_TO_X402_ID: dict[str, str] = {
+    # OpenAI models
     'codex-gpt-5.2': 'llm-gpt-5.2-codex',
-    'gpt-5.2-codex': 'llm-gpt-5.2-codex',
-    # Claude models
-    'anthropic/claude-opus-4-6': 'llm-claude-opus',
-    'claude-opus-4-6': 'llm-claude-opus',
-    'anthropic/claude-sonnet-4-6': 'llm-claude-sonnet',
-    'claude-sonnet-4-6': 'llm-claude-sonnet',
-    # DeepSeek
-    'deepseek/deepseek-chat-v3-0324': 'llm-deepseek-v3',
-    'deepseek-chat-v3': 'llm-deepseek-v3',
+    'codex-gpt-5.1-codex-max': 'llm-gpt-5.2-codex',
+    'openai/gpt-5.2-codex': 'llm-gpt-5.2-codex',
+    'openai/gpt-5.1-codex': 'llm-gpt-5.2-codex',
+    'openai/gpt-5.1-codex-max': 'llm-gpt-5.2-codex',
+    'openai/gpt-5.2': 'llm-gpt-5.2',
+    'openai/gpt-5.1': 'llm-gpt-5.2',
+    # Anthropic models
+    'anthropic/claude-opus-4.5': 'llm-claude-opus',
+    'anthropic/claude-opus-4.6': 'llm-claude-opus',
+    'anthropic/claude-sonnet-4.5': 'llm-claude-sonnet',
+    'anthropic/claude-sonnet-4.6': 'llm-claude-sonnet',
+    # Google models
+    'google/gemini-2.5-pro': 'llm-gemini-pro',
+    'google/gemini-2.5-flash': 'llm-gemini-flash',
+    # DeepSeek models
+    'deepseek/deepseek-r1': 'llm-deepseek-r1',
+    'deepseek/deepseek-chat': 'llm-deepseek',
+    # Other models
+    'moonshotai/kimi-k2.5': 'llm-kimi',
+    'minimax/minimax-m2.5': 'llm-minimax',
+    'z-ai/glm-5': 'llm-glm',
 }
 
+# Fallback prices per request (if x402 discovery fails)
+FALLBACK_X402_PRICES: dict[str, float] = {
+    'llm-gpt-5.2-codex': 0.06,
+    'llm-gpt-5.2': 0.08,
+    'llm-claude-opus': 0.09,
+    'llm-claude-sonnet': 0.06,
+    'llm-claude-haiku': 0.02,
+    'llm-gemini-pro': 0.035,
+    'llm-gemini-flash': 0.009,
+    'llm-deepseek': 0.005,
+    'llm-deepseek-r1': 0.01,
+    'llm-kimi': 0.03,
+    'llm-minimax': 0.01,
+    'llm-glm': 0.03,
+    'llm-grok': 0.06,
+    'llm-llama': 0.002,
+}
 
-def parse_price_string(price_str: str) -> float:
+# Default price for unknown models
+DEFAULT_REQUEST_PRICE = 0.10
+
+
+def _parse_price(price_str: str) -> float:
     """Parse x402 price string like '$0.06' to float."""
     if not price_str:
         return 0.0
@@ -82,91 +94,97 @@ def parse_price_string(price_str: str) -> float:
         return 0.0
 
 
-async def fetch_x402_pricing() -> dict[str, X402ModelPricing]:
-    """Fetch current pricing from x402 engine discovery endpoint."""
-    async with httpx.AsyncClient() as client:
-        response = await client.get(X402_DISCOVERY_URL, timeout=30.0)
+async def _fetch_x402_pricing() -> dict[str, float]:
+    """Fetch pricing from x402 discovery endpoint."""
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(X402_DISCOVERY_URL)
         response.raise_for_status()
         data = response.json()
 
-    pricing: dict[str, X402ModelPricing] = {}
+    prices: dict[str, float] = {}
 
-    for service in data.get('services', []):
-        service_id = service.get('id', '')
-        price_str = service.get('price', '$0')
-        endpoint = service.get('endpoint', '')
+    # x402 uses categories -> list of services structure
+    for category_services in data.get('categories', {}).values():
+        for service in category_services:
+            service_id = service.get('id', '')
+            if service_id.startswith('llm-'):
+                price = _parse_price(service.get('price', ''))
+                if price > 0:
+                    prices[service_id] = price
 
-        pricing[service_id] = X402ModelPricing(
-            price_per_request=parse_price_string(price_str),
-            endpoint=endpoint,
-        )
-
-    return pricing
+    return prices
 
 
-async def get_x402_pricing() -> dict[str, X402ModelPricing]:
+async def get_x402_pricing() -> dict[str, float]:
     """Get x402 pricing (cached for 1 hour)."""
-    global _x402_pricing_cache, _x402_cache_timestamp
+    global _x402_cache, _x402_cache_timestamp
 
     async with _x402_cache_lock:
         now = datetime.utcnow()
-        if _x402_cache_timestamp and (now - _x402_cache_timestamp) < X402_CACHE_TTL and _x402_pricing_cache:
-            return _x402_pricing_cache
+        if _x402_cache_timestamp and (now - _x402_cache_timestamp) < X402_CACHE_TTL and _x402_cache:
+            return _x402_cache
 
         try:
-            _x402_pricing_cache = await fetch_x402_pricing()
+            _x402_cache = await _fetch_x402_pricing()
             _x402_cache_timestamp = now
-            logger.info(f'Refreshed x402 pricing cache: {len(_x402_pricing_cache)} services')
+            logger.info(f'Refreshed x402 pricing: {len(_x402_cache)} models')
         except Exception as e:
             logger.warning(f'Failed to fetch x402 pricing: {e}')
-            if _x402_pricing_cache:
-                return _x402_pricing_cache
-            return {}
+            if _x402_cache:
+                return _x402_cache
+            return FALLBACK_X402_PRICES.copy()
 
-    return _x402_pricing_cache
-
-
-# Fallback prices per request (if x402 discovery fails)
-FALLBACK_X402_PRICES: dict[str, float] = {
-    'llm-gpt-5.2-codex': 0.06,
-    'llm-claude-opus': 0.09,
-    'llm-claude-sonnet': 0.03,
-    'llm-deepseek-v3': 0.005,
-}
+    return _x402_cache
 
 
-def get_x402_model_id(model: str) -> str:
+def get_x402_model_id(our_model: str) -> str:
     """Map our model name to x402 model ID."""
-    return MODEL_TO_X402.get(model, model)
+    if our_model in MODEL_TO_X402_ID:
+        return MODEL_TO_X402_ID[our_model]
+
+    # Try to find a partial match
+    model_lower = our_model.lower()
+    for our_name, x402_id in MODEL_TO_X402_ID.items():
+        if our_name.lower() in model_lower or model_lower in our_name.lower():
+            return x402_id
+
+    # Return as-is if no mapping found
+    return our_model
 
 
-def get_request_price_sync(model: str, pricing_cache: dict[str, X402ModelPricing]) -> float:
-    """Get per-request price for a model (synchronous)."""
-    x402_id = get_x402_model_id(model)
+def get_model_request_price(our_model: str, x402_prices: dict[str, float]) -> float:
+    """Get the per-request price for a model."""
+    x402_id = get_x402_model_id(our_model)
 
-    # Check x402 cache
-    if x402_id in pricing_cache:
-        return pricing_cache[x402_id]['price_per_request']
+    # Try exact match
+    if x402_id in x402_prices:
+        return x402_prices[x402_id]
 
-    # Check fallback
+    # Try fallback
     if x402_id in FALLBACK_X402_PRICES:
         return FALLBACK_X402_PRICES[x402_id]
 
-    # Default fallback for unknown models
-    return 0.10  # conservative estimate
+    # Try matching by suffix (e.g., 'claude-opus' matches 'llm-claude-opus')
+    for price_id, price in x402_prices.items():
+        if price_id.endswith(x402_id) or x402_id.endswith(price_id.replace('llm-', '')):
+            return price
+
+    return DEFAULT_REQUEST_PRICE
 
 
 def calculate_model_price_sync(
     model: str,
-    effort: str,
-    pricing_cache: dict[str, X402ModelPricing],
+    x402_prices: dict[str, float],
 ) -> float:
-    """Calculate price for a model at given effort level (synchronous)."""
-    price_per_request = get_request_price_sync(model, pricing_cache)
-    num_requests = REQUESTS_PER_EFFORT.get(effort, REQUESTS_PER_EFFORT['medium'])
+    """
+    Calculate the total price for one model's audit.
 
-    # Base cost = price per request * estimated requests
-    base_cost = price_per_request * num_requests
+    Price = request_price × REQUESTS_PER_AUDIT × (1 + markup)
+    """
+    request_price = get_model_request_price(model, x402_prices)
+
+    # Base cost for the audit (2 API calls)
+    base_cost = request_price * REQUESTS_PER_AUDIT
 
     # Apply markup
     markup = settings.PAYMENT_MARKUP
@@ -176,45 +194,98 @@ def calculate_model_price_sync(
     return max(round(final_price, 2), 0.01)
 
 
-async def calculate_model_price(model: str, effort: str) -> float:
-    """Calculate price for a model at given effort level."""
-    pricing_cache = await get_x402_pricing()
-    return calculate_model_price_sync(model, effort, pricing_cache)
+async def calculate_model_price(model: str, effort: str = 'medium') -> float:
+    """Calculate price for a single model's audit."""
+    # Note: effort parameter kept for API compatibility but not used
+    # x402 pricing is per-request, not per-token, so effort doesn't change cost
+    x402_prices = await get_x402_pricing()
+    return calculate_model_price_sync(model, x402_prices)
 
 
-async def calculate_total_price(models: list[str], effort: str) -> float:
-    """Calculate total price for multiple models."""
-    pricing_cache = await get_x402_pricing()
-    total = sum(calculate_model_price_sync(model, effort, pricing_cache) for model in models)
+async def calculate_total_price(models: list[str], effort: str = 'medium') -> float:
+    """Calculate total price for auditing with multiple models."""
+    x402_prices = await get_x402_pricing()
+    total = sum(calculate_model_price_sync(model, x402_prices) for model in models)
     return round(total, 2)
 
 
-async def get_all_model_prices(effort: str) -> dict[str, float]:
-    """Get prices for all available models at a given effort level."""
+async def get_all_model_prices(effort: str = 'medium') -> dict[str, float]:
+    """Get prices for all our supported models."""
     from api.core.const import ALLOWED_MODELS, OPENROUTER_ALLOWED_MODELS
 
-    pricing_cache = await get_x402_pricing()
+    x402_prices = await get_x402_pricing()
     prices = {}
 
     all_models = list(ALLOWED_MODELS) + list(OPENROUTER_ALLOWED_MODELS)
     for model in all_models:
-        prices[model] = calculate_model_price_sync(model, effort, pricing_cache)
+        prices[model] = calculate_model_price_sync(model, x402_prices)
 
     return prices
 
 
-def get_token_budget(effort: str) -> dict[str, int]:
-    """Get the token budget for an effort level."""
-    return TOKEN_BUDGETS.get(effort, TOKEN_BUDGETS['medium'])
+async def get_pricing_breakdown(models: list[str]) -> dict:
+    """
+    Get detailed pricing breakdown for display.
+
+    Returns:
+        {
+            'models': {model: {'x402_id': x, 'price_per_request': p, 'requests': n, 'subtotal': y}},
+            'requests_per_audit': n,
+            'markup_percent': x,
+            'total_before_markup': x,
+            'total': y
+        }
+    """
+    x402_prices = await get_x402_pricing()
+    markup = settings.PAYMENT_MARKUP
+
+    breakdown = {
+        'models': {},
+        'requests_per_audit': REQUESTS_PER_AUDIT,
+        'markup_percent': int(markup * 100),
+        'total_before_markup': 0.0,
+        'total': 0.0,
+    }
+
+    for model in models:
+        x402_id = get_x402_model_id(model)
+        request_price = get_model_request_price(model, x402_prices)
+        subtotal_before_markup = request_price * REQUESTS_PER_AUDIT
+        subtotal = subtotal_before_markup * (1 + markup)
+
+        breakdown['models'][model] = {
+            'x402_model_id': x402_id,
+            'price_per_request': round(request_price, 4),
+            'requests': REQUESTS_PER_AUDIT,
+            'subtotal_before_markup': round(subtotal_before_markup, 4),
+            'subtotal': round(subtotal, 2),
+        }
+        breakdown['total_before_markup'] += subtotal_before_markup
+
+    breakdown['total_before_markup'] = round(breakdown['total_before_markup'], 4)
+    breakdown['total'] = round(breakdown['total_before_markup'] * (1 + markup), 2)
+
+    return breakdown
 
 
-def get_requests_budget(effort: str) -> int:
-    """Get the request budget for an effort level."""
-    return REQUESTS_PER_EFFORT.get(effort, REQUESTS_PER_EFFORT['medium'])
-
-
-def get_x402_endpoint(model: str) -> str | None:
+def get_x402_endpoint(model: str) -> str:
     """Get the x402 API endpoint for a model."""
     x402_id = get_x402_model_id(model)
-    # Return the constructed endpoint URL
-    return f'{X402_BASE_URL}/api/{x402_id.replace("llm-", "llm/")}'
+    # Convert llm-xxx to llm/xxx for the endpoint
+    endpoint_path = x402_id.replace('llm-', 'llm/')
+    return f'{X402_BASE_URL}/api/{endpoint_path}'
+
+
+# Legacy exports for API compatibility
+TOKEN_BUDGETS = {
+    'low': {'input_tokens': 50_000, 'output_tokens': 10_000},
+    'medium': {'input_tokens': 150_000, 'output_tokens': 30_000},
+    'high': {'input_tokens': 300_000, 'output_tokens': 60_000},
+}
+
+# With x402 per-request pricing, all effort levels use same number of requests
+REQUESTS_PER_EFFORT = {
+    'low': REQUESTS_PER_AUDIT,
+    'medium': REQUESTS_PER_AUDIT,
+    'high': REQUESTS_PER_AUDIT,
+}

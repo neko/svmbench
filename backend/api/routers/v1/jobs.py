@@ -35,7 +35,7 @@ async def _validate_and_consume_payment_token(
     session: AsyncSession,
     payment_token: str | None,
     effort: str,
-    models: list[str],
+    model: str,
 ) -> bool:
     """Validate payment token and return True if payment is valid."""
     if not payment_token:
@@ -56,11 +56,8 @@ async def _validate_and_consume_payment_token(
     if not payment:
         return False
 
-    # Verify models match (payment must cover requested models)
-    paid_models = set(payment.models.split(',')) if payment.models else set()
-    requested_models = set(models)
-
-    if not requested_models.issubset(paid_models):
+    # Verify model matches
+    if payment.models != model:
         return False
 
     payment.used = True
@@ -267,7 +264,7 @@ async def start_job(
     paid_with_token = False
     if form.payment_token:
         paid_with_token = await _validate_and_consume_payment_token(
-            session, form.payment_token, form.effort, [form.model]
+            session, form.payment_token, form.effort, form.model
         )
         if not paid_with_token:
             raise HTTPException(status_code=402, detail='Invalid or expired payment token')
@@ -359,7 +356,7 @@ async def start_job_from_url(
     paid_with_token = False
     if request.payment_token:
         paid_with_token = await _validate_and_consume_payment_token(
-            session, request.payment_token, request.effort, [request.model]
+            session, request.payment_token, request.effort, request.model
         )
         if not paid_with_token:
             raise HTTPException(status_code=402, detail='Invalid or expired payment token')

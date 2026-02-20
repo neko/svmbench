@@ -63,8 +63,8 @@ class VerifyPaymentRequest(BaseModel):
     signature: str
     payer_wallet: str
     amount: float
-    models: list[str]
-    effort: Literal['low', 'medium', 'high'] = 'medium'  # kept for compatibility
+    model: str
+    effort: Literal['low', 'medium', 'high'] = 'medium'
 
 
 class VerifyPaymentResponse(BaseModel):
@@ -161,8 +161,8 @@ async def verify_payment(
     if not settings.PAYMENT_RECEIVER_WALLET:
         raise HTTPException(status_code=500, detail='Payment receiver wallet not configured')
 
-    if not request.models:
-        raise HTTPException(status_code=400, detail='At least one model is required')
+    if not request.model:
+        raise HTTPException(status_code=400, detail='Model is required')
 
     # Check if this signature has already been used
     existing = await session.execute(
@@ -171,8 +171,8 @@ async def verify_payment(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail='Payment signature already used')
 
-    # Calculate expected price based on models and effort (x402 flat per-request pricing)
-    expected_amount = await calculate_total_price(request.models, request.effort)
+    # Calculate expected price based on model and effort (x402 flat per-request pricing)
+    expected_amount = await calculate_total_price([request.model], request.effort)
 
     try:
         is_valid = await verify_usdc_transfer(
@@ -198,13 +198,13 @@ async def verify_payment(
     # Generate payment token
     payment_token = secrets.token_hex(32)
 
-    # Store payment record with models
+    # Store payment record with model
     payment = Payment(
         signature=request.signature,
         payer_wallet=request.payer_wallet,
         amount=request.amount,
         effort=request.effort,
-        models=','.join(request.models),
+        models=request.model,
         payment_token=payment_token,
     )
     session.add(payment)
@@ -217,7 +217,7 @@ async def validate_payment_token(
     session: SessionDep,
     payment_token: str,
     effort: str,
-    models: list[str],
+    model: str,
 ) -> Payment | None:
     """Validate and consume a payment token. Returns the Payment if valid, None otherwise."""
     result = await session.execute(
@@ -232,11 +232,8 @@ async def validate_payment_token(
     if not payment:
         return None
 
-    # Verify models match (payment must cover requested models)
-    paid_models = set(payment.models.split(',')) if payment.models else set()
-    requested_models = set(models)
-
-    if not requested_models.issubset(paid_models):
+    # Verify model matches
+    if payment.models != model:
         return None
 
     payment.used = True

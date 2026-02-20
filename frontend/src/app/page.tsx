@@ -158,7 +158,7 @@ export default function Page() {
     [],
   )
 
-  const handleSubmit = useCallback(async () => {
+  const handleSubmit = useCallback(async (directToken?: string) => {
     if (!isAuthorized) {
       setSubmitError("Authorize with GitHub to start analysis.")
       return
@@ -176,8 +176,9 @@ export default function Page() {
       let name: string
 
       // For x402, we pass the payment token; for others, the API key
+      // Use directToken if provided (from payment callback), otherwise use state
       const authKey = provider === "x402" ? "" : apiKey.trim()
-      const token = provider === "x402" ? paymentToken ?? undefined : undefined
+      const token = provider === "x402" ? (directToken ?? paymentToken ?? undefined) : undefined
 
       if (inputMode === "url" && sourceUrl) {
         name = extractNameFromUrl(sourceUrl)
@@ -461,7 +462,7 @@ export default function Page() {
                 {/* Show start button only for non-x402 providers */}
                 {provider !== "x402" && (
                   <Button
-                    onClick={handleSubmit}
+                    onClick={() => handleSubmit()}
                     disabled={!canSubmit}
                     className="w-full uppercase"
                   >

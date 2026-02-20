@@ -21,7 +21,7 @@ interface PaymentOptionProps {
   apiKey: string
   onApiKeyChange: (key: string) => void
   onPaymentComplete: (paymentToken: string) => void
-  onStartAnalysis: () => void
+  onStartAnalysis: (paymentToken?: string) => void
   disabled?: boolean
   keyPredefined?: boolean
   isSubmitting?: boolean
@@ -189,8 +189,8 @@ export function PaymentOption({
       if (result.valid) {
         setPaymentSuccess(true)
         onPaymentComplete(result.payment_token)
-        // Start analysis after payment
-        onStartAnalysis()
+        // Start analysis after payment - pass token directly to avoid state timing issues
+        onStartAnalysis(result.payment_token)
       } else {
         setPaymentError("Payment verification failed")
       }

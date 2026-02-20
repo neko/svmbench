@@ -1502,6 +1502,7 @@ dependencies = [
     { name = "solders" },
     { name = "sqlalchemy" },
     { name = "uvicorn" },
+    { name = "websockets" },
 ]
 
 [package.dev-dependencies]
@@ -1533,6 +1534,7 @@ requires-dist = [
     { name = "solders", specifier = ">=0.25.0" },
     { name = "sqlalchemy", specifier = "==2.0.46" },
     { name = "uvicorn", specifier = "==0.40.0" },
+    { name = "websockets", specifier = ">=15.0.1" },
 ]
 
 [package.metadata.requires-dev]

@@ -2,14 +2,20 @@ import os
 import uuid
 from contextlib import suppress
 from http import HTTPStatus
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from httpx import AsyncClient
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.core.config import settings
+from api.util.fs import ROOT_DIR
+
+# Directory for storing public audit source files
+PUBLIC_SOURCES_DIR = ROOT_DIR / 'public_sources'
 from api.core.const import ALLOWED_MODELS, ALLOWED_PROVIDERS, OPENROUTER_ALLOWED_MODELS
 from api.core.deps import OptionalTokenDep, TokenDep, get_db
 from api.core.impl import auth_backend
@@ -309,3 +315,27 @@ async def patch_job(
     response = JobStatusResponse.model_validate(job)
     response.queue_position = await _queue_position(session, job)
     return response
+
+
+@router.get('/{job_id}/source')
+async def get_job_source(
+    job_id: uuid.UUID,
+    session: DbSessionDep,
+) -> FileResponse:
+    """Get source files for a public audit."""
+    job = await session.get(Job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail='Job not found')
+    if not job.public:
+        raise HTTPException(status_code=404, detail='Source not available')
+
+    # Look for source file by job_id
+    source_path = PUBLIC_SOURCES_DIR / f'{job_id}.zip'
+    if not source_path.exists():
+        raise HTTPException(status_code=404, detail='Source not available')
+
+    return FileResponse(
+        source_path,
+        media_type='application/zip',
+        filename=job.file_name or 'source.zip',
+    )

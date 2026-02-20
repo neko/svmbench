@@ -232,3 +232,17 @@ function stripAuditPrefix(path: string): string {
     ? normalized.slice("audit/".length)
     : normalized
 }
+
+export async function fetchJobSource(jobId: string): Promise<Blob | null> {
+  try {
+    const response = await fetch(`${API_BASE}/v1/jobs/${jobId}/source`, {
+      cache: "no-store",
+    })
+    if (!response.ok) {
+      return null
+    }
+    return response.blob()
+  } catch {
+    return null
+  }
+}

@@ -1,0 +1,3 @@
+# Public audit source files stored locally
+*.zip
+\!.gitignore

@@ -280,13 +280,7 @@ export function CodeViewerPanel({
             wordWrap={wordWrap}
             onAnnotationClick={onAnnotationClick}
           />
-        ) : (
-          <div className="flex min-h-[50vh] items-center justify-center p-8">
-            <p className="text-base text-muted-foreground">
-              Select a finding to view code
-            </p>
-          </div>
-        )}
+        ) : null}
         <ScrollBar orientation="horizontal" />
       </ScrollArea>
     </div>

@@ -36,10 +36,10 @@ import { useJob } from "@/hooks/use-job"
 import { useMediaQuery } from "@/hooks/use-media-query"
 import { useMounted } from "@/hooks/use-mounted"
 import { useVulnerabilityNavigation } from "@/hooks/use-vulnerability-navigation"
-import { readFilesFromInput } from "@/lib/file-loader"
+import { readFilesFromInput, readFilesFromZip } from "@/lib/file-loader"
 import { validateFileData } from "@/lib/file-validation"
 import type { JobResponse } from "@/lib/jobs"
-import { mapJobVulnerabilities, setJobPublic } from "@/lib/jobs"
+import { fetchJobSource, mapJobVulnerabilities, setJobPublic } from "@/lib/jobs"
 import { normalizeFilePath } from "@/lib/paths"
 import { addRecentJob } from "@/lib/recent-jobs"
 import { inferPackageName } from "@/lib/upload-utils"
@@ -385,6 +385,27 @@ export default function ResultsClient() {
 
   // Skip the file requirement gate for public audits
   const isPublicAudit = job?.public === true
+  const publicSourceLoadedRef = useRef<string | null>(null)
+
+  // Auto-load source files for public audits
+  useEffect(() => {
+    if (!isPublicAudit || !job?.job_id || files) return
+    if (publicSourceLoadedRef.current === job.job_id) return
+
+    publicSourceLoadedRef.current = job.job_id
+
+    async function loadPublicSource() {
+      const blob = await fetchJobSource(job!.job_id)
+      if (!blob) return
+
+      const { rootFolder, fileData } = await readFilesFromZip(blob)
+      if (fileData.length > 0) {
+        loadFileData(rootFolder, fileData)
+      }
+    }
+
+    loadPublicSource()
+  }, [isPublicAudit, job?.job_id, files, loadFileData])
 
   const emptyState = useMemo(() => {
     if (isRunComplete && !files) {
@@ -592,7 +613,7 @@ export default function ResultsClient() {
                   <ResizablePanel
                     defaultSize={isNarrowViewport ? "40%" : "40%"}
                     minSize={isNarrowViewport ? "200px" : "320px"}
-                    maxSize={isNarrowViewport ? "60%" : "520px"}
+                    maxSize={isNarrowViewport ? "80%" : "70%"}
                   >
                     <VulnerabilityDetailsPanel
                       vulnerability={selectedVulnerability}

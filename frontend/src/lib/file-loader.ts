@@ -31,8 +31,8 @@ function isZipFile(file: File): boolean {
   )
 }
 
-async function readFilesFromZip(
-  file: File,
+export async function readFilesFromZip(
+  file: File | Blob,
 ): Promise<{ rootFolder: string | null; fileData: FileData[] }> {
   const zip = await JSZip.loadAsync(file)
   const fileData: FileData[] = []

@@ -2,8 +2,10 @@
 
 import { Delete02Icon, FolderAddIcon, Link01Icon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
+import JSZip from "jszip"
 import {
   type ChangeEvent,
+  type ClipboardEvent,
   type DragEvent,
   type KeyboardEvent,
   useCallback,
@@ -26,6 +28,27 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
+
+async function extractZipContents(zipFile: File): Promise<File[]> {
+  const zip = await JSZip.loadAsync(zipFile)
+  const files: File[] = []
+  const zipName = zipFile.name.replace(/\.zip$/i, "")
+
+  const entries = Object.entries(zip.files)
+  for (const [path, zipEntry] of entries) {
+    if (zipEntry.dir) continue
+
+    const content = await zipEntry.async("blob")
+    const file = new File([content], zipEntry.name, { type: "" })
+    Object.defineProperty(file, "webkitRelativePath", {
+      value: `${zipName}/${path}`,
+      writable: false,
+    })
+    files.push(file)
+  }
+
+  return files
+}
 
 async function readDirectoryEntries(
   dirEntry: FileSystemDirectoryEntry,
@@ -170,9 +193,23 @@ export function FileUploader({
   }, [disabled])
 
   const handleFiles = useCallback(
-    (files: File[] | null) => {
+    async (files: File[] | null) => {
       if (!files || files.length === 0) return
-      onFilesSelected([...files])
+
+      // Check if single zip file - extract for preview
+      if (files.length === 1 && files[0].name.toLowerCase().endsWith(".zip")) {
+        try {
+          const extractedFiles = await extractZipContents(files[0])
+          onFilesSelected(extractedFiles)
+        } catch (error) {
+          console.error("Failed to extract zip:", error)
+          // Fallback to showing zip as-is
+          onFilesSelected([...files])
+        }
+      } else {
+        onFilesSelected([...files])
+      }
+
       if (inputRef.current) {
         inputRef.current.value = ""
       }
@@ -251,7 +288,7 @@ export function FileUploader({
     onClear?.()
   }, [onClear])
 
-  const [showUrlInput, setShowUrlInput] = useState(false)
+  const dropZoneRef = useRef<HTMLButtonElement>(null)
 
   // If URL is set, switch to URL mode automatically
   useEffect(() => {
@@ -259,6 +296,19 @@ export function FileUploader({
       onInputModeChange("url")
     }
   }, [sourceUrl, onInputModeChange])
+
+  // Handle paste event for URLs when hovering over drag area
+  const handlePaste = useCallback(
+    (event: ClipboardEvent<HTMLElement>) => {
+      const text = event.clipboardData.getData("text")
+      if (text && (text.startsWith("http://") || text.startsWith("https://"))) {
+        event.preventDefault()
+        onSourceUrlChange?.(text)
+        onInputModeChange("url")
+      }
+    },
+    [onSourceUrlChange, onInputModeChange],
+  )
 
   return (
     <div className="w-full space-y-2">
@@ -382,12 +432,14 @@ export function FileUploader({
         </div>
       ) : (
         <button
+          ref={dropZoneRef}
           type="button"
           onClick={triggerInput}
           onKeyDown={handleKeyDown}
           onDrop={handleDrop}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
+          onPaste={handlePaste}
           className={cn(
             "flex h-64 w-full flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border bg-muted/20 px-6 py-8 text-center transition-colors outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30",
             !disabled && "cursor-pointer",
@@ -410,44 +462,11 @@ export function FileUploader({
               {" / "}
               <span className="underline" onClick={(e) => { e.stopPropagation(); triggerZipInput() }}>.zip</span>
             </span>
+            <span className="text-xs text-muted-foreground/50 mt-1">
+              or paste a link while hovering
+            </span>
           </div>
         </button>
-      )}
-
-      {/* "or paste a link" - shows URL input on hover/focus */}
-      {!hasFiles && inputMode !== "url" && (
-        <div
-          className="group relative"
-          onMouseEnter={() => setShowUrlInput(true)}
-          onMouseLeave={() => !sourceUrl && setShowUrlInput(false)}
-        >
-          {showUrlInput ? (
-            <div className="flex items-center gap-2">
-              <Input
-                type="url"
-                placeholder="https://github.com/user/repo..."
-                value={sourceUrl ?? ""}
-                onChange={(e) => {
-                  onSourceUrlChange?.(e.target.value)
-                  if (e.target.value.trim()) {
-                    onInputModeChange("url")
-                  }
-                }}
-                disabled={disabled}
-                className="text-xs h-8"
-                autoFocus
-              />
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setShowUrlInput(true)}
-              className="w-full text-center text-xs text-muted-foreground/70 hover:text-muted-foreground transition-colors py-1"
-            >
-              or paste a link
-            </button>
-          )}
-        </div>
       )}
 
       <input

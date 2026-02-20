@@ -41,8 +41,9 @@ cd "${AGENT_DIR}"
 # Run OpenCode with the run subcommand
 # It reads AGENTS.md automatically for instructions
 # Use "audit-model" alias to avoid / parsing issues with OpenRouter model IDs
+# OpenCode uses provider/model format (not provider:model)
 timeout --signal=TERM --kill-after=30s "${AUDIT_TIMEOUT}s" \
-  opencode run -m "openrouter:audit-model" "Follow the instructions in AGENTS.md to audit the code in audit/ and write results to submission/audit.md" \
+  opencode run -m "openrouter/audit-model" "Follow the instructions in AGENTS.md to audit the code in audit/ and write results to submission/audit.md" \
   > "${LOGS_DIR}/opencode.log" 2>&1 || true
 
 if [[ ! -s "${SUBMISSION_DIR}/audit.md" ]]; then

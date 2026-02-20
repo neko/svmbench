@@ -10,17 +10,6 @@ from api.models.job import JobStatus
 from api.util.zip_validate import validate_upload_zip
 
 
-class StartJobForm(BaseModel):
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    models: list[str]
-    openai_key: Annotated[str | None, StringConstraints(strip_whitespace=True, min_length=1)]
-    provider: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] = 'openai'
-    effort: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] = 'medium'
-    payment_token: Annotated[str | None, StringConstraints(strip_whitespace=True, min_length=1)] = None
-    file: UploadFile
-
-
 class StartJobFromUrlRequest(BaseModel):
     source_url: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
     models: list[str]
@@ -50,6 +39,14 @@ class StartJobFromUrlRequest(BaseModel):
             raise ValueError(msg)
         return self
 
+
+class StartJobForm(StartJobFromUrlRequest):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    file: UploadFile
+    # Override source_url to make it optional (not used in file upload)
+    source_url: Annotated[str | None, StringConstraints(strip_whitespace=True, min_length=1)] = None
+
     @classmethod
     def as_form(
         cls,
@@ -63,7 +60,6 @@ class StartJobFromUrlRequest(BaseModel):
         try:
             return cls(models=models, openai_key=openai_key, provider=provider, effort=effort, payment_token=payment_token, file=file)
         except ValidationError as exc:
-            # TODO(es3n1n): this is **very** bad
             errors = exc.errors()
             messages = []
             for err in errors:
@@ -78,29 +74,6 @@ class StartJobFromUrlRequest(BaseModel):
             if not messages:
                 messages = ['Invalid request']
             raise HTTPException(status_code=412, detail=messages[0]) from exc
-
-    @field_validator('models', mode='before')
-    @classmethod
-    def parse_models(cls, value: str | list[str]) -> list[str]:
-        if isinstance(value, str):
-            return [m.strip() for m in value.split(',') if m.strip()]
-        # Handle list with single comma-separated string (from form data)
-        if isinstance(value, list) and len(value) == 1 and isinstance(value[0], str) and ',' in value[0]:
-            return [m.strip() for m in value[0].split(',') if m.strip()]
-        return [m.strip() for m in value if m.strip()]
-
-    @model_validator(mode='after')
-    def require_openai_key_or_payment(self) -> 'StartJobForm':
-        # Skip validation if using proxy's static key or backend's static key
-        if settings.BACKEND_USE_PROXY_STATIC_KEY:
-            return self
-        # Allow payment_token as alternative to openai_key
-        if self.payment_token:
-            return self
-        if settings.BACKEND_STATIC_OAI_KEY is None and not self.openai_key:
-            msg = 'openai_key or payment_token is required'
-            raise ValueError(msg)
-        return self
 
     @field_validator('file', mode='before')
     @classmethod

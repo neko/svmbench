@@ -17,6 +17,7 @@ class StartJobForm(BaseModel):
     openai_key: Annotated[str | None, StringConstraints(strip_whitespace=True, min_length=1)]
     provider: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] = 'openai'
     effort: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] = 'medium'
+    payment_token: Annotated[str | None, StringConstraints(strip_whitespace=True, min_length=1)] = None
     file: UploadFile
 
 
@@ -26,6 +27,7 @@ class StartJobFromUrlRequest(BaseModel):
     openai_key: Annotated[str | None, StringConstraints(strip_whitespace=True, min_length=1)] = None
     provider: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] = 'openai'
     effort: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] = 'medium'
+    payment_token: Annotated[str | None, StringConstraints(strip_whitespace=True, min_length=1)] = None
 
     @field_validator('models', mode='before')
     @classmethod
@@ -37,11 +39,14 @@ class StartJobFromUrlRequest(BaseModel):
         return [m.strip() for m in value if m.strip()]
 
     @model_validator(mode='after')
-    def require_openai_key(self) -> 'StartJobFromUrlRequest':
+    def require_openai_key_or_payment(self) -> 'StartJobFromUrlRequest':
         if settings.BACKEND_USE_PROXY_STATIC_KEY:
             return self
+        # Allow payment_token as alternative to openai_key
+        if self.payment_token:
+            return self
         if settings.BACKEND_STATIC_OAI_KEY is None and not self.openai_key:
-            msg = 'openai_key is required'
+            msg = 'openai_key or payment_token is required'
             raise ValueError(msg)
         return self
 
@@ -53,9 +58,10 @@ class StartJobFromUrlRequest(BaseModel):
         openai_key: Annotated[str | None, Form()] = None,
         provider: Annotated[str, Form()] = 'openai',
         effort: Annotated[str, Form()] = 'medium',
+        payment_token: Annotated[str | None, Form()] = None,
     ) -> 'StartJobForm':
         try:
-            return cls(models=models, openai_key=openai_key, provider=provider, effort=effort, file=file)
+            return cls(models=models, openai_key=openai_key, provider=provider, effort=effort, payment_token=payment_token, file=file)
         except ValidationError as exc:
             # TODO(es3n1n): this is **very** bad
             errors = exc.errors()
@@ -84,12 +90,15 @@ class StartJobFromUrlRequest(BaseModel):
         return [m.strip() for m in value if m.strip()]
 
     @model_validator(mode='after')
-    def require_openai_key(self) -> 'StartJobForm':
+    def require_openai_key_or_payment(self) -> 'StartJobForm':
         # Skip validation if using proxy's static key or backend's static key
         if settings.BACKEND_USE_PROXY_STATIC_KEY:
             return self
+        # Allow payment_token as alternative to openai_key
+        if self.payment_token:
+            return self
         if settings.BACKEND_STATIC_OAI_KEY is None and not self.openai_key:
-            msg = 'openai_key is required'
+            msg = 'openai_key or payment_token is required'
             raise ValueError(msg)
         return self
 

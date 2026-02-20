@@ -31,6 +31,44 @@ from api.util.zip_validate import ZipValidationError, validate_zip_bytes
 router = APIRouter(prefix='/jobs', tags=['jobs'])
 
 
+async def _validate_and_consume_payment_token(
+    session: AsyncSession,
+    payment_token: str | None,
+    effort: str,
+    models: list[str],
+) -> bool:
+    """Validate payment token and return True if payment is valid."""
+    if not payment_token:
+        return False
+
+    from api.models.payment import Payment
+    from datetime import datetime, timezone
+
+    result = await session.execute(
+        select(Payment).where(
+            Payment.payment_token == payment_token,
+            Payment.used == False,  # noqa: E712
+            Payment.effort == effort,
+        )
+    )
+    payment = result.scalar_one_or_none()
+
+    if not payment:
+        return False
+
+    # Verify models match (payment must cover requested models)
+    paid_models = set(payment.models.split(',')) if payment.models else set()
+    requested_models = set(models)
+
+    if not requested_models.issubset(paid_models):
+        return False
+
+    payment.used = True
+    payment.used_at = datetime.now(timezone.utc)
+    await session.commit()
+    return True
+
+
 JobFormDep = Annotated[StartJobForm, Depends(StartJobForm.as_form)]
 DbSessionDep = Annotated[AsyncSession, Depends(get_db)]
 PublisherDep = Annotated[RabbitMQPublisher, Depends(get_rabbitmq_publisher)]
@@ -131,8 +169,18 @@ async def _maybe_validate_user_key(*, form: StartJobForm, openai_key: str | None
             raise HTTPException(status_code=401, detail='Invalid API key')
 
 
-def _encode_openai_token(*, openai_key: str, use_proxy_static: bool, use_proxy_tokens: bool) -> tuple[str, str]:
+def _encode_openai_token(
+    *,
+    openai_key: str,
+    use_proxy_static: bool,
+    use_proxy_tokens: bool,
+    use_x402: bool = False,
+) -> tuple[str, str]:
     """Return (openai_token, key_mode) for the worker bundle."""
+    if use_x402:
+        # x402 paid mode - marker token, proxy handles payment
+        return 'X402', 'x402'
+
     if use_proxy_static:
         # Marker token (not a real credential). The proxy substitutes its static key.
         return 'STATIC', 'proxy_static'
@@ -211,20 +259,32 @@ async def start_job(
     for model in form.models:
         _require_allowed_model(model, form.provider)
 
-    use_proxy_static = settings.BACKEND_USE_PROXY_STATIC_KEY
-    use_proxy_tokens = settings.BACKEND_OAI_KEY_MODE == 'proxy' or form.provider == 'openrouter'
-    openai_key = _resolve_openai_key(form)
+    # Check for payment token - if valid, use x402 paid mode
+    paid_with_token = False
+    if form.payment_token:
+        paid_with_token = await _validate_and_consume_payment_token(
+            session, form.payment_token, form.effort, form.models
+        )
+        if not paid_with_token:
+            raise HTTPException(status_code=402, detail='Invalid or expired payment token')
 
-    if not use_proxy_static and not openai_key:
+    use_x402 = paid_with_token
+    use_proxy_static = settings.BACKEND_USE_PROXY_STATIC_KEY and not use_x402
+    use_proxy_tokens = (settings.BACKEND_OAI_KEY_MODE == 'proxy' or form.provider == 'openrouter') and not use_x402
+    openai_key = _resolve_openai_key(form) if not paid_with_token else None
+
+    if not use_x402 and not use_proxy_static and not openai_key:
         raise HTTPException(status_code=412, detail='API key is required')
 
-    await _maybe_validate_user_key(form=form, openai_key=openai_key)
+    if not paid_with_token:
+        await _maybe_validate_user_key(form=form, openai_key=openai_key)
 
     batch_id = uuid.uuid4()
     openai_token, key_mode = _encode_openai_token(
         openai_key=openai_key or '',
         use_proxy_static=use_proxy_static,
         use_proxy_tokens=use_proxy_tokens,
+        use_x402=use_x402,
     )
 
     try:
@@ -302,12 +362,22 @@ async def start_job_from_url(
     for model in request.models:
         _require_allowed_model(model, request.provider)
 
-    use_proxy_static = settings.BACKEND_USE_PROXY_STATIC_KEY
-    use_proxy_tokens = settings.BACKEND_OAI_KEY_MODE == 'proxy' or request.provider == 'openrouter'
-    static_key = settings.BACKEND_STATIC_OAI_KEY.get_secret_value() if settings.BACKEND_STATIC_OAI_KEY else None
-    openai_key = static_key or request.openai_key
+    # Check for payment token - if valid, use x402 paid mode
+    paid_with_token = False
+    if request.payment_token:
+        paid_with_token = await _validate_and_consume_payment_token(
+            session, request.payment_token, request.effort, request.models
+        )
+        if not paid_with_token:
+            raise HTTPException(status_code=402, detail='Invalid or expired payment token')
 
-    if not use_proxy_static and not openai_key:
+    use_x402 = paid_with_token
+    use_proxy_static = settings.BACKEND_USE_PROXY_STATIC_KEY and not use_x402
+    use_proxy_tokens = (settings.BACKEND_OAI_KEY_MODE == 'proxy' or request.provider == 'openrouter') and not use_x402
+    static_key = settings.BACKEND_STATIC_OAI_KEY.get_secret_value() if settings.BACKEND_STATIC_OAI_KEY else None
+    openai_key = (static_key or request.openai_key) if not paid_with_token else None
+
+    if not use_x402 and not use_proxy_static and not openai_key:
         raise HTTPException(status_code=412, detail='API key is required')
 
     # Fetch source from URL
@@ -334,6 +404,7 @@ async def start_job_from_url(
         openai_key=openai_key or '',
         use_proxy_static=use_proxy_static,
         use_proxy_tokens=use_proxy_tokens,
+        use_x402=use_x402,
     )
 
     bundle = build_secret_bundle_from_bytes(

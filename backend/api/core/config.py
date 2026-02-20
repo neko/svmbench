@@ -69,6 +69,19 @@ class Settings(BaseSettings):
     AUTH_BACKEND: str | None = None
     AUTH_BACKEND_ARGUMENTS: dict[str, str] = Field(default_factory=dict)
 
+    # Payment configuration
+    PAYMENT_ENABLED: bool = True
+    PAYMENT_RECEIVER_WALLET: str = 'jewishBC8etWX2663FW5CEQErVnP28ftRsfhJEShvwn'
+    PAYMENT_SOLANA_RPC_URL: str = 'https://deborah-q5m00f-fast-mainnet.helius-rpc.com'
+    # Markup percentage on top of model costs (e.g., 0.5 = 50% markup)
+    PAYMENT_MARKUP: float = 0.5
+
+    # x402 engine configuration
+    # Service wallet private key (base58 encoded) for paying x402 API calls
+    # This wallet is funded by user payments and used to pay for API calls
+    X402_SERVICE_WALLET_KEY: Secret[str] | None = None
+    X402_GATEWAY_URL: str = 'https://x402-gateway-production.up.railway.app'
+
     @field_validator('RABBITMQ_QUEUE_SUFFIX', mode='before')
     @classmethod
     def _normalize_queue_suffix(cls, value: str | None) -> str | None:

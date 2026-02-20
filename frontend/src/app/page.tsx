@@ -8,9 +8,9 @@ import { useCallback, useMemo, useState } from "react"
 import { AppFooter } from "@/components/app-footer"
 import { AppHeader } from "@/components/app-header"
 import { FileUploader } from "@/components/file-uploader"
+import { PaymentOption, usePaymentMode } from "@/components/payment-option"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
   Popover,
@@ -71,6 +71,7 @@ export default function Page() {
     isConfigLoading,
     keyPredefined,
   } = useAuth()
+  const { paymentToken, setPaymentToken, clearPaymentToken } = usePaymentMode()
 
   const fileCount = files?.length ?? 0
   const selectedLabel = useMemo(() => {
@@ -85,21 +86,16 @@ export default function Page() {
     ? !!sourceUrl && sourceUrl.trim().length > 0
     : !!files && fileCount > 0
 
+  const hasValidAuth = keyPredefined || apiKey.trim().length > 0 || !!paymentToken
+
   const canSubmit =
-    hasValidInput && !isSubmitting && !isAuthLoading && isAuthorized && selectedModels.length > 0
+    hasValidInput && !isSubmitting && !isAuthLoading && isAuthorized && selectedModels.length > 0 && hasValidAuth
 
   const handleFilesSelected = useCallback(
     (selected: File[]) => {
       setUpload(selected, inferPackageName(selected))
     },
     [setUpload],
-  )
-
-  const handleKeyChange = useCallback(
-    (event: React.ChangeEvent<HTMLInputElement>) => {
-      setApiKey(event.target.value)
-    },
-    [setApiKey],
   )
 
   const handleProviderChange = useCallback(
@@ -148,16 +144,19 @@ export default function Page() {
       if (inputMode === "url" && sourceUrl) {
         // URL mode
         name = extractNameFromUrl(sourceUrl)
-        response = await startJobFromUrl(sourceUrl, selectedModels, trimmedKey, provider, effort)
+        response = await startJobFromUrl(sourceUrl, selectedModels, trimmedKey, provider, effort, paymentToken ?? undefined)
       } else if (files && fileCount > 0) {
         // Files mode
         name = selectedLabel ?? "files"
         const zipFile = await createZipFromFiles(files, name)
-        response = await startJob(zipFile, selectedModels, trimmedKey, provider, effort)
+        response = await startJob(zipFile, selectedModels, trimmedKey, provider, effort, paymentToken ?? undefined)
       } else {
         setSubmitError("Please provide files or a URL")
         return
       }
+
+      // Clear payment token after successful submission
+      clearPaymentToken()
 
       // Add all jobs to recent list
       for (const job of response.jobs) {
@@ -312,22 +311,17 @@ export default function Page() {
                     </SelectContent>
                   </Select>
                 </div>
-                {!isConfigLoading && !keyPredefined && (
-                  <div className="grid gap-1">
-                    <Label
-                      htmlFor="api-key"
-                      className="text-xs text-foreground"
-                    >
-                      {provider === "openrouter" ? "OpenRouter API Key" : "OpenAI API Key"}
-                    </Label>
-                    <Input
-                      id="api-key"
-                      type="password"
-                      placeholder={provider === "openrouter" ? "sk-or-&hellip;" : "sk-&hellip;"}
-                      value={apiKey}
-                      onChange={handleKeyChange}
-                    />
-                  </div>
+                {!isConfigLoading && (
+                  <PaymentOption
+                    provider={provider}
+                    effort={effort}
+                    models={selectedModels}
+                    apiKey={apiKey}
+                    onApiKeyChange={setApiKey}
+                    onPaymentComplete={setPaymentToken}
+                    disabled={isSubmitting}
+                    keyPredefined={keyPredefined}
+                  />
                 )}
                 <div className="grid gap-1">
                   <Label className="text-xs text-foreground">

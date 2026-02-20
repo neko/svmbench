@@ -38,6 +38,7 @@ RUNNER_DIR = Path(os.getenv('SVM_BENCH_RUNNER_DIR') or '/opt/svmbench/worker_run
 DETECT_MD_PATH = RUNNER_DIR / 'detect.md'
 MODEL_MAP_PATH = RUNNER_DIR / 'model_map.json'
 CODEX_RUNNER_SH = RUNNER_DIR / 'run_codex_detect.sh'
+X402_RUNNER_PY = RUNNER_DIR / 'run_x402_audit.py'
 
 EFFORT_TIMEOUTS: dict[str, int] = {
     'low': 120,      # 2 minutes
@@ -272,6 +273,61 @@ def _run_codex_detect(*, openai_token: str, key_mode: str, provider: str = 'open
     return audit_md_path
 
 
+def _run_x402_audit(*, openai_token: str, effort: str = 'medium') -> Path:
+    """Run two-phase audit using x402 API (or proxy in x402 mode)."""
+    env = os.environ.copy()
+    env['OPENAI_API_KEY'] = openai_token
+    env['HOME'] = str(AGENT_DIR)
+    env['AGENT_DIR'] = str(AGENT_DIR)
+    env['SUBMISSION_DIR'] = str(SUBMISSION_DIR)
+    env['LOGS_DIR'] = str(LOGS_DIR)
+
+    # Set base URL to proxy (which handles x402 payments)
+    if OAI_PROXY_BASE_URL:
+        base_url = OAI_PROXY_BASE_URL.rstrip('/')
+        if not base_url.endswith('/v1'):
+            base_url = f'{base_url}/v1'
+        env['OPENAI_BASE_URL'] = base_url
+    else:
+        msg = 'Missing OAI_PROXY_BASE_URL for x402 mode'
+        raise RuntimeError(msg)
+
+    if not X402_RUNNER_PY.exists():
+        msg = f'Missing x402 runner: {X402_RUNNER_PY}'
+        raise RuntimeError(msg)
+
+    model_map = _load_model_map()
+    model = _resolve_codex_model(model_key=MODEL_KEY, model_map=model_map)
+    env['CODEX_MODEL'] = model
+
+    # Apply effort-based timeout
+    timeout_seconds = EFFORT_TIMEOUTS.get(effort, EFFORT_TIMEOUTS['medium'])
+    logger.info(f'x402 audit: effort={effort}, model={model}, timeout={timeout_seconds}s')
+
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.run(  # noqa: S603
+        ['python3', str(X402_RUNNER_PY)],
+        cwd=str(AGENT_DIR),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        timeout=timeout_seconds + 60,  # extra buffer
+        check=False,
+    )
+    (LOGS_DIR / 'x402_runner.log').write_text(proc.stdout or '', encoding='utf-8')
+    if proc.returncode != 0:
+        msg = f'x402 runner failed with code={proc.returncode}:\n{proc.stdout}'
+        raise RuntimeError(msg)
+
+    audit_md_path = SUBMISSION_DIR / 'audit.md'
+    if not audit_md_path.exists():
+        msg = f'Missing expected output: {audit_md_path}'
+        raise RuntimeError(msg)
+
+    return audit_md_path
+
+
 def _unpack_bundle(bundle: bytes, work_dir: Path) -> tuple[Path, str, str, str, str]:
     upload_zip_path = work_dir / 'upload.zip'
     key_payload: dict | None = None
@@ -302,7 +358,7 @@ def _unpack_bundle(bundle: bytes, work_dir: Path) -> tuple[Path, str, str, str, 
     if not isinstance(key_mode, str):
         key_mode = 'direct'
     key_mode = key_mode.strip().lower()
-    if key_mode not in {'direct', 'proxy', 'proxy_static'}:
+    if key_mode not in {'direct', 'proxy', 'proxy_static', 'x402'}:
         key_mode = 'direct'
 
     provider = key_payload.get('provider') or 'openai'
@@ -354,9 +410,14 @@ async def main() -> None:
         with zipfile.ZipFile(upload_zip_path, 'r') as zf:
             zf.extractall(AUDIT_DIR)  # noqa: S202
 
-        logger.info(f'Extracted the bundle, running detect-only agent with provider={provider}, effort={effort}...')
+        logger.info(f'Extracted the bundle, running detect-only agent with provider={provider}, effort={effort}, key_mode={key_mode}...')
         try:
-            audit_md = _run_codex_detect(openai_token=openai_token, key_mode=key_mode, provider=provider, effort=effort)
+            if key_mode == 'x402':
+                # Use two-phase x402 audit (faster, 2 API calls)
+                audit_md = _run_x402_audit(openai_token=openai_token, effort=effort)
+            else:
+                # Use iterative codex CLI
+                audit_md = _run_codex_detect(openai_token=openai_token, key_mode=key_mode, provider=provider, effort=effort)
             audit_text = audit_md.read_text()
             _extract_json_payload(audit_text)
 

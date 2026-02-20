@@ -116,19 +116,34 @@ export async function setJobPublic(
   return response.json()
 }
 
+export interface StartJobOptions {
+  file: File
+  models: string[]
+  apiKey?: string
+  provider?: string
+  effort?: string
+  paymentToken?: string
+}
+
 export async function startJob(
   file: File,
   models: string[],
   apiKey: string,
   provider: string = "openai",
   effort: string = "medium",
+  paymentToken?: string,
 ): Promise<StartJobResponse> {
   const body = new FormData()
   body.append("file", file)
   body.append("models", models.join(","))
-  body.append("openai_key", apiKey)
   body.append("provider", provider)
   body.append("effort", effort)
+
+  if (paymentToken) {
+    body.append("payment_token", paymentToken)
+  } else {
+    body.append("openai_key", apiKey)
+  }
 
   const response = await fetch(`${API_BASE}/v1/jobs/start`, {
     method: "POST",
@@ -150,19 +165,27 @@ export async function startJobFromUrl(
   apiKey: string,
   provider: string = "openai",
   effort: string = "medium",
+  paymentToken?: string,
 ): Promise<StartJobResponse> {
+  const payload: Record<string, string> = {
+    source_url: sourceUrl,
+    models: models.join(","),
+    provider,
+    effort,
+  }
+
+  if (paymentToken) {
+    payload.payment_token = paymentToken
+  } else {
+    payload.openai_key = apiKey
+  }
+
   const response = await fetch(`${API_BASE}/v1/jobs/start-from-url`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      source_url: sourceUrl,
-      models: models.join(","),
-      openai_key: apiKey,
-      provider,
-      effort,
-    }),
+    body: JSON.stringify(payload),
     credentials: "include",
   })
 

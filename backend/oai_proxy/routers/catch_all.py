@@ -1,6 +1,7 @@
 from collections.abc import AsyncIterator, Iterable
 from functools import lru_cache
 from urllib.parse import quote
+import asyncio
 import json
 import time
 import uuid
@@ -14,14 +15,37 @@ from starlette.responses import StreamingResponse
 from api.util.aes_gcm import decrypt_token, derive_key
 from oai_proxy.core.config import settings
 
+# x402 payment support (optional - only loaded if configured)
+_x402_keypair = None
+_x402_lock = asyncio.Lock()
+
 
 PROVIDER_BASE_URLS = {
     'openai': 'https://api.openai.com',
     'openrouter': 'https://openrouter.ai/api',
+    'x402': settings.X402_GATEWAY_URL,
 }
 DEFAULT_PROVIDER = 'openai'
 # Marker token that triggers use of the static key
 STATIC_KEY_MARKER = 'STATIC'
+# Marker token that triggers x402 paid mode
+X402_MARKER = 'X402'
+
+# x402 model endpoint mapping
+X402_MODEL_ENDPOINTS = {
+    'gpt-5.2-codex': 'llm/gpt-5.2-codex',
+    'gpt-5.2-2025-12-11': 'llm/gpt-5.2-codex',
+    'codex-gpt-5.2': 'llm/gpt-5.2-codex',
+    'claude-opus-4-6': 'llm/claude-opus',
+    'anthropic/claude-opus-4-6': 'llm/claude-opus',
+    'anthropic/claude-opus-4-5': 'llm/claude-opus',
+    'claude-sonnet-4-6': 'llm/claude-sonnet',
+    'anthropic/claude-sonnet-4-6': 'llm/claude-sonnet',
+    'anthropic/claude-sonnet-4-5': 'llm/claude-sonnet',
+    'deepseek-chat-v3': 'llm/deepseek-v3',
+    'deepseek/deepseek-chat-v3-0324': 'llm/deepseek-v3',
+    'deepseek/deepseek-chat': 'llm/deepseek-v3',
+}
 HOP_BY_HOP_HEADERS = {
     'connection',
     'host',
@@ -60,6 +84,7 @@ def _resolve_openai_key(token: str) -> str:
     """Resolve the actual OpenAI key from the provided token.
 
     If token is STATIC_KEY_MARKER, use the static key (if configured).
+    If token is X402_MARKER, return marker (handled separately).
     Otherwise, decrypt the encrypted token.
     """
     if token == STATIC_KEY_MARKER:
@@ -70,7 +95,146 @@ def _resolve_openai_key(token: str) -> str:
                 detail='Static key not configured on proxy',
             )
         return static_key
+    if token == X402_MARKER:
+        # x402 mode - no API key needed, we pay per request
+        return X402_MARKER
     return _decrypt_token(token)
+
+
+async def _get_x402_keypair():
+    """Get or initialize x402 service wallet keypair."""
+    global _x402_keypair
+
+    async with _x402_lock:
+        if _x402_keypair is not None:
+            return _x402_keypair
+
+        wallet_key = settings.X402_SERVICE_WALLET_KEY
+        if not wallet_key:
+            return None
+
+        try:
+            from solders.keypair import Keypair
+            _x402_keypair = Keypair.from_base58_string(wallet_key.get_secret_value())
+            logger.info(f'x402 service wallet loaded: {_x402_keypair.pubkey()}')
+            return _x402_keypair
+        except Exception as e:
+            logger.warning(f'Failed to load x402 wallet: {e}')
+            return None
+
+
+def _get_x402_endpoint_for_model(model: str) -> str:
+    """Get x402 API endpoint for a model."""
+    endpoint = X402_MODEL_ENDPOINTS.get(model)
+    if endpoint:
+        return f"{settings.X402_GATEWAY_URL}/api/{endpoint}"
+
+    # Fallback: try to construct from model name
+    clean_model = model.replace('/', '-').replace('_', '-')
+    return f"{settings.X402_GATEWAY_URL}/api/llm/{clean_model}"
+
+
+async def _make_x402_payment(amount: float, receiver: str, payment_id: str) -> str:
+    """Execute USDC payment for x402 and return transaction signature."""
+    keypair = await _get_x402_keypair()
+    if not keypair:
+        raise HTTPException(
+            status_code=501,
+            detail='x402 service wallet not configured',
+        )
+
+    try:
+        from solana.rpc.async_api import AsyncClient
+        from solders.pubkey import Pubkey
+        from solders.system_program import TransferParams, transfer
+        from solders.transaction import Transaction
+
+        # For now, use a simplified payment flow
+        # x402 may accept direct payment via their API
+        # This is a placeholder for actual x402 payment implementation
+        logger.info(f'x402 payment: ${amount} to {receiver} (id: {payment_id})')
+
+        # In production, this would create and send a USDC transfer
+        # For now, return a placeholder - actual implementation depends on x402 API
+        return f"x402_payment_{payment_id}"
+    except Exception as e:
+        logger.error(f'x402 payment failed: {e}')
+        raise HTTPException(
+            status_code=502,
+            detail=f'x402 payment failed: {e}',
+        ) from e
+
+
+async def _proxy_x402_request(
+    request: Request,
+    model: str,
+    body: dict,
+) -> Response:
+    """Proxy a request through x402 with payment."""
+    endpoint = _get_x402_endpoint_for_model(model)
+
+    keypair = await _get_x402_keypair()
+    if not keypair:
+        raise HTTPException(
+            status_code=501,
+            detail='x402 service wallet not configured for paid requests',
+        )
+
+    headers = {
+        'Content-Type': 'application/json',
+        'X-Payer-Wallet': str(keypair.pubkey()),
+    }
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, read=None)) as client:
+        # Initial request to x402
+        response = await client.post(endpoint, json=body, headers=headers)
+
+        # Handle 402 Payment Required
+        if response.status_code == 402:
+            # Parse payment requirements
+            payment_amount = float(response.headers.get('X-Payment-Amount', '0'))
+            payment_receiver = response.headers.get('X-Payment-Receiver', '')
+            payment_id = response.headers.get('X-Payment-Id', '')
+
+            if not payment_amount or not payment_receiver:
+                # Try to parse from body
+                try:
+                    payment_info = response.json().get('payment', {})
+                    payment_amount = payment_info.get('amount', payment_amount)
+                    payment_receiver = payment_info.get('receiver', payment_receiver)
+                    payment_id = payment_info.get('id', payment_id)
+                except Exception:
+                    pass
+
+            if not payment_amount or not payment_receiver:
+                raise HTTPException(
+                    status_code=502,
+                    detail='x402 returned 402 but no payment info',
+                )
+
+            logger.info(f'x402 requires payment: ${payment_amount} for {model}')
+
+            # Make payment
+            signature = await _make_x402_payment(payment_amount, payment_receiver, payment_id)
+
+            # Retry with payment proof
+            headers['X-Payment-Signature'] = signature
+            headers['X-Payment-Id'] = payment_id
+
+            response = await client.post(endpoint, json=body, headers=headers)
+
+        if response.status_code != 200:
+            return Response(
+                content=response.content,
+                status_code=response.status_code,
+                media_type='application/json',
+            )
+
+        return Response(
+            content=response.content,
+            status_code=200,
+            media_type='application/json',
+        )
 
 
 def _get_authorization_token(request: Request) -> str:
@@ -572,6 +736,23 @@ async def _proxy_request(request: Request, path: str) -> Response:
     token = _get_authorization_token(request)
     openai_key = _resolve_openai_key(token)
     provider, base_url, cleaned_path = _get_provider_from_request(request, path)
+
+    # Handle x402 provider - paid mode
+    if provider == 'x402' or openai_key == X402_MARKER:
+        # Parse request body to get model
+        body_bytes = await request.body()
+        try:
+            body = json.loads(body_bytes)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail='Invalid JSON body')
+
+        model = body.get('model', '')
+        if not model:
+            raise HTTPException(status_code=400, detail='Model is required for x402 requests')
+
+        # Route to x402 paid endpoint
+        return await _proxy_x402_request(request, model, body)
+
     forward_headers = _filter_headers(request.headers.items())
     forward_headers['authorization'] = f'Bearer {openai_key}'
 

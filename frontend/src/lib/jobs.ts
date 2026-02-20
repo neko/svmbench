@@ -144,6 +144,36 @@ export async function startJob(
   return response.json()
 }
 
+export async function startJobFromUrl(
+  sourceUrl: string,
+  models: string[],
+  apiKey: string,
+  provider: string = "openai",
+  effort: string = "medium",
+): Promise<StartJobResponse> {
+  const response = await fetch(`${API_BASE}/v1/jobs/start-from-url`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      source_url: sourceUrl,
+      models: models.join(","),
+      openai_key: apiKey,
+      provider,
+      effort,
+    }),
+    credentials: "include",
+  })
+
+  if (!response.ok) {
+    const message = await readApiError(response)
+    throw new Error(message ?? `Failed to start job from URL (${response.status})`)
+  }
+
+  return response.json()
+}
+
 export async function fetchJobHistory(
   signal?: AbortSignal,
 ): Promise<JobHistoryItem[]> {

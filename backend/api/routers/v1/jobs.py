@@ -21,10 +21,11 @@ from api.core.deps import OptionalTokenDep, TokenDep, get_db
 from api.core.impl import auth_backend
 from api.core.rabbitmq import RabbitMQPublisher, get_rabbitmq_publisher
 from api.models.job import Job, JobStatus
-from api.schemas.job import BatchJobItem, JobHistoryItem, JobStatusResponse, PatchJobForm, StartJobForm, StartJobResponse
+from api.schemas.job import BatchJobItem, JobHistoryItem, JobStatusResponse, PatchJobForm, StartJobForm, StartJobFromUrlRequest, StartJobResponse
 from api.secrets.impl import secret_storage
 from api.util.aes_gcm import derive_key, encrypt_token
-from api.util.secrets_bundle import build_secret_bundle
+from api.util.secrets_bundle import build_secret_bundle, build_secret_bundle_from_bytes
+from api.util.zip_validate import ZipValidationError, validate_zip_bytes
 
 
 router = APIRouter(prefix='/jobs', tags=['jobs'])
@@ -150,6 +151,49 @@ def _encode_openai_token(*, openai_key: str, use_proxy_static: bool, use_proxy_t
     return openai_key, 'direct'
 
 
+async def _fetch_source_from_url(url: str) -> tuple[bytes, str]:
+    """Fetch source code from URL. Returns (zip_bytes, filename)."""
+    import re
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+
+    # Handle GitHub URLs
+    github_match = re.match(r'^/([^/]+)/([^/]+)(?:/tree/([^/]+))?', parsed.path)
+    if parsed.netloc == 'github.com' and github_match:
+        owner, repo, branch = github_match.groups()
+        repo = repo.rstrip('.git')
+        branch = branch or 'main'
+        # Use GitHub's archive API
+        archive_url = f'https://github.com/{owner}/{repo}/archive/refs/heads/{branch}.zip'
+        async with AsyncClient(follow_redirects=True, timeout=60.0) as client:
+            response = await client.get(archive_url)
+            if response.status_code == 404:
+                # Try master branch
+                archive_url = f'https://github.com/{owner}/{repo}/archive/refs/heads/master.zip'
+                response = await client.get(archive_url)
+            if response.status_code != 200:
+                raise HTTPException(status_code=400, detail=f'Failed to fetch from GitHub: {response.status_code}')
+            return response.content, f'{repo}.zip'
+
+    # Generic URL - try to download directly
+    async with AsyncClient(follow_redirects=True, timeout=60.0) as client:
+        response = await client.get(url)
+        if response.status_code != 200:
+            raise HTTPException(status_code=400, detail=f'Failed to fetch URL: {response.status_code}')
+
+        content_type = response.headers.get('content-type', '')
+        if 'zip' not in content_type.lower() and not url.lower().endswith('.zip'):
+            raise HTTPException(status_code=400, detail='URL must point to a zip file or GitHub repository')
+
+        # Extract filename from URL or use default
+        filename = parsed.path.split('/')[-1] or 'source.zip'
+        if not filename.endswith('.zip'):
+            filename = 'source.zip'
+
+        return response.content, filename
+
+
 @router.post('/start')
 async def start_job(
     form: JobFormDep,
@@ -239,6 +283,118 @@ async def start_job(
         )
     finally:
         await form.file.close()
+
+
+@router.post('/start-from-url')
+async def start_job_from_url(
+    request: StartJobFromUrlRequest,
+    session: DbSessionDep,
+    publisher: PublisherDep,
+    token: TokenDep,
+) -> StartJobResponse:
+    await _require_no_active_job(session=session, user_id=token.user_id)
+    _require_allowed_provider(request.provider)
+    _require_allowed_effort(request.effort)
+
+    if not request.models:
+        raise HTTPException(status_code=412, detail='At least one model is required')
+
+    for model in request.models:
+        _require_allowed_model(model, request.provider)
+
+    use_proxy_static = settings.BACKEND_USE_PROXY_STATIC_KEY
+    use_proxy_tokens = settings.BACKEND_OAI_KEY_MODE == 'proxy' or request.provider == 'openrouter'
+    static_key = settings.BACKEND_STATIC_OAI_KEY.get_secret_value() if settings.BACKEND_STATIC_OAI_KEY else None
+    openai_key = static_key or request.openai_key
+
+    if not use_proxy_static and not openai_key:
+        raise HTTPException(status_code=412, detail='API key is required')
+
+    # Fetch source from URL
+    zip_data, filename = await _fetch_source_from_url(request.source_url)
+
+    # Validate size
+    if len(zip_data) > settings.BACKEND_MAX_ATTACHMENT_SIZE_BYTES:
+        raise HTTPException(status_code=413, detail=f'Downloaded file too large (max {settings.BACKEND_MAX_ATTACHMENT_SIZE_BYTES} bytes)')
+
+    # Validate zip contents
+    try:
+        validate_zip_bytes(
+            zip_data,
+            max_uncompressed_bytes=settings.BACKEND_MAX_ATTACHMENT_UNCOMPRESSED_BYTES,
+            max_files=settings.BACKEND_ZIP_MAX_FILES,
+            max_ratio=settings.BACKEND_ZIP_MAX_COMPRESSION_RATIO,
+            require_rust=True,
+        )
+    except ZipValidationError as exc:
+        raise HTTPException(status_code=412, detail=str(exc)) from exc
+
+    batch_id = uuid.uuid4()
+    openai_token, key_mode = _encode_openai_token(
+        openai_key=openai_key or '',
+        use_proxy_static=use_proxy_static,
+        use_proxy_tokens=use_proxy_tokens,
+    )
+
+    bundle = build_secret_bundle_from_bytes(
+        upload_data=zip_data,
+        openai_token=openai_token,
+        key_mode=key_mode,
+        provider=request.provider,
+        effort=request.effort,
+    )
+
+    jobs: list[Job] = []
+    secret_refs: list[str] = []
+
+    for model in request.models:
+        job_id = uuid.uuid4()
+        secret_ref = os.urandom(32).hex()
+        result_token = os.urandom(32).hex()
+
+        await secret_storage.save_secret(secret_ref, bundle)
+        secret_refs.append(secret_ref)
+
+        job = Job(
+            id=job_id,
+            batch_id=batch_id,
+            status=JobStatus.queued,
+            user_id=token.user_id,
+            secret_ref=secret_ref,
+            result_token=result_token,
+            model=model,
+            effort=request.effort,
+            file_name=filename[:128],
+        )
+        session.add(job)
+        jobs.append(job)
+
+    await session.commit()
+
+    try:
+        for job in jobs:
+            await publisher.publish_job_start(
+                job_id=str(job.id),
+                secret_ref=job.secret_ref or '',
+                model=job.model,
+                result_token=job.result_token or '',
+            )
+    except Exception as err:
+        for secret_ref in secret_refs:
+            with suppress(Exception):
+                await secret_storage.delete_secret(secret_ref)
+        for job in jobs:
+            await session.delete(job)
+        await session.commit()
+        raise HTTPException(
+            status_code=502,
+            detail='Failed to enqueue jobs',
+        ) from err
+
+    return StartJobResponse(
+        batch_id=batch_id,
+        jobs=[BatchJobItem.model_validate(job) for job in jobs],
+    )
 
 
 @router.get('/batch/{batch_id}')

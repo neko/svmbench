@@ -1,6 +1,6 @@
 "use client"
 
-import { Delete02Icon, FolderAddIcon } from "@hugeicons/core-free-icons"
+import { Delete02Icon, FolderAddIcon, Link01Icon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 import {
   type ChangeEvent,
@@ -18,6 +18,7 @@ import {
   getTopLevelFolderPaths,
 } from "@/components/file-tree"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import {
   Tooltip,
@@ -104,20 +105,30 @@ async function processDroppedItems(
   return files
 }
 
+type InputMode = "files" | "url"
+
 interface FileUploaderProps {
+  inputMode: InputMode
+  onInputModeChange: (mode: InputMode) => void
   onFilesSelected: (files: File[]) => void
   files?: File[] | null
   selectedLabel?: string | null
   fileCount?: number | null
+  sourceUrl?: string | null
+  onSourceUrlChange?: (url: string) => void
   disabled?: boolean
   onClear?: () => void
 }
 
 export function FileUploader({
+  inputMode,
+  onInputModeChange,
   onFilesSelected,
   files,
   selectedLabel,
   fileCount,
+  sourceUrl,
+  onSourceUrlChange,
   disabled = false,
   onClear,
 }: FileUploaderProps) {
@@ -241,8 +252,64 @@ export function FileUploader({
   }, [onClear])
 
   return (
-    <div className="w-full">
-      {hasFiles ? (
+    <div className="w-full space-y-3">
+      {/* Mode toggle */}
+      <div className="flex gap-1 rounded-lg bg-muted/30 p-1">
+        <button
+          type="button"
+          onClick={() => onInputModeChange("files")}
+          disabled={disabled}
+          className={cn(
+            "flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+            inputMode === "files"
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground",
+            disabled && "opacity-50 cursor-not-allowed"
+          )}
+        >
+          <HugeiconsIcon icon={FolderAddIcon} strokeWidth={2} className="mr-1.5 inline-block size-3.5" />
+          Files / Zip
+        </button>
+        <button
+          type="button"
+          onClick={() => onInputModeChange("url")}
+          disabled={disabled}
+          className={cn(
+            "flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+            inputMode === "url"
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground",
+            disabled && "opacity-50 cursor-not-allowed"
+          )}
+        >
+          <HugeiconsIcon icon={Link01Icon} strokeWidth={2} className="mr-1.5 inline-block size-3.5" />
+          URL
+        </button>
+      </div>
+
+      {/* URL input mode */}
+      {inputMode === "url" ? (
+        <div className="flex h-64 flex-col items-center justify-center gap-4 rounded-2xl border border-dashed border-border bg-muted/20 px-6 py-8">
+          <HugeiconsIcon
+            icon={Link01Icon}
+            strokeWidth={1.5}
+            className="size-6 text-muted-foreground"
+          />
+          <div className="w-full max-w-sm space-y-2">
+            <Input
+              type="url"
+              placeholder="https://github.com/user/repo or zip URL..."
+              value={sourceUrl ?? ""}
+              onChange={(e) => onSourceUrlChange?.(e.target.value)}
+              disabled={disabled}
+              className="text-center"
+            />
+            <p className="text-center text-xs text-muted-foreground">
+              GitHub repo, zip download link, or any URL to source code
+            </p>
+          </div>
+        </div>
+      ) : hasFiles ? (
         <section
           aria-label="Uploaded files"
           onDrop={handleDrop}

@@ -19,6 +19,32 @@ class StartJobForm(BaseModel):
     effort: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] = 'medium'
     file: UploadFile
 
+
+class StartJobFromUrlRequest(BaseModel):
+    source_url: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    models: list[str]
+    openai_key: Annotated[str | None, StringConstraints(strip_whitespace=True, min_length=1)] = None
+    provider: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] = 'openai'
+    effort: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] = 'medium'
+
+    @field_validator('models', mode='before')
+    @classmethod
+    def parse_models(cls, value: str | list[str]) -> list[str]:
+        if isinstance(value, str):
+            return [m.strip() for m in value.split(',') if m.strip()]
+        if isinstance(value, list) and len(value) == 1 and isinstance(value[0], str) and ',' in value[0]:
+            return [m.strip() for m in value[0].split(',') if m.strip()]
+        return [m.strip() for m in value if m.strip()]
+
+    @model_validator(mode='after')
+    def require_openai_key(self) -> 'StartJobFromUrlRequest':
+        if settings.BACKEND_USE_PROXY_STATIC_KEY:
+            return self
+        if settings.BACKEND_STATIC_OAI_KEY is None and not self.openai_key:
+            msg = 'openai_key is required'
+            raise ValueError(msg)
+        return self
+
     @classmethod
     def as_form(
         cls,

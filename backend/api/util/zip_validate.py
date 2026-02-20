@@ -143,3 +143,31 @@ def validate_upload_zip(
     finally:
         with suppress(Exception):
             file_obj.seek(0)
+
+
+def validate_zip_bytes(
+    data: bytes,
+    *,
+    max_uncompressed_bytes: int,
+    max_files: int,
+    max_ratio: int,
+    require_rust: bool = True,
+) -> None:
+    """Validate a zip file from bytes."""
+    import io
+    compressed_size = len(data)
+    file_obj = io.BytesIO(data)
+
+    try:
+        with zipfile.ZipFile(file_obj, 'r') as zf:
+            scan = _scan_zip(
+                zf,
+                max_files=max_files,
+                max_uncompressed_bytes=max_uncompressed_bytes,
+                require_rust=require_rust,
+            )
+            _ensure_ratio(scan.total_uncompressed, compressed_size, max_ratio)
+            _ensure_rust(has_rust=scan.has_rust, require_rust=require_rust)
+    except zipfile.BadZipFile as exc:
+        msg = 'Invalid zip file.'
+        raise ZipValidationError(msg) from exc

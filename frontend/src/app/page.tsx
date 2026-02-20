@@ -28,7 +28,7 @@ import { useAuth } from "@/hooks/use-auth"
 import { useLocalStorage } from "@/hooks/use-local-storage"
 import { useSessionStorage } from "@/hooks/use-session-storage"
 import { API_BASE } from "@/lib/api"
-import { startJob } from "@/lib/jobs"
+import { startJob, startJobFromUrl } from "@/lib/jobs"
 import { addRecentJob, type RecentJob } from "@/lib/recent-jobs"
 import { inferPackageName } from "@/lib/upload-utils"
 import { createZipFromFiles } from "@/lib/zip"
@@ -54,7 +54,7 @@ const OPENROUTER_MODELS = [
 
 export default function Page() {
   const router = useRouter()
-  const { files, packageName, setUpload, clearUpload } = useUploadStore()
+  const { inputMode, files, packageName, sourceUrl, setInputMode, setUpload, setSourceUrl, clearUpload } = useUploadStore()
   const [apiKey, setApiKey] = useSessionStorage("svmbench.apiKey", "")
   const [provider, setProvider] = useState<"openai" | "openrouter">("openai")
   const [selectedModels, setSelectedModels] = useState<string[]>(["codex-gpt-5.2"])
@@ -81,8 +81,12 @@ export default function Page() {
 
   const models = provider === "openrouter" ? OPENROUTER_MODELS : OPENAI_MODELS
 
+  const hasValidInput = inputMode === "url"
+    ? !!sourceUrl && sourceUrl.trim().length > 0
+    : !!files && fileCount > 0
+
   const canSubmit =
-    !!files && fileCount > 0 && !isSubmitting && !isAuthLoading && isAuthorized && selectedModels.length > 0
+    hasValidInput && !isSubmitting && !isAuthLoading && isAuthorized && selectedModels.length > 0
 
   const handleFilesSelected = useCallback(
     (selected: File[]) => {
@@ -124,7 +128,6 @@ export default function Page() {
   )
 
   const handleSubmit = async () => {
-    if (!files || fileCount === 0) return
     if (!isAuthorized) {
       setSubmitError("Authorize with GitHub to start analysis.")
       return
@@ -139,9 +142,23 @@ export default function Page() {
     setSubmitError(null)
 
     try {
-      const name = selectedLabel ?? "files"
-      const zipFile = await createZipFromFiles(files, name)
-      const response = await startJob(zipFile, selectedModels, trimmedKey, provider, effort)
+      let response
+      let name: string
+
+      if (inputMode === "url" && sourceUrl) {
+        // URL mode
+        name = extractNameFromUrl(sourceUrl)
+        response = await startJobFromUrl(sourceUrl, selectedModels, trimmedKey, provider, effort)
+      } else if (files && fileCount > 0) {
+        // Files mode
+        name = selectedLabel ?? "files"
+        const zipFile = await createZipFromFiles(files, name)
+        response = await startJob(zipFile, selectedModels, trimmedKey, provider, effort)
+      } else {
+        setSubmitError("Please provide files or a URL")
+        return
+      }
+
       // Add all jobs to recent list
       for (const job of response.jobs) {
         addRecentJob({
@@ -160,6 +177,29 @@ export default function Page() {
       setSubmitError(error instanceof Error ? error.message : "Upload failed")
     } finally {
       setIsSubmitting(false)
+    }
+  }
+
+  // Extract a readable name from URL
+  const extractNameFromUrl = (url: string): string => {
+    try {
+      const parsed = new URL(url)
+      // GitHub repo URL
+      if (parsed.hostname === "github.com") {
+        const parts = parsed.pathname.split("/").filter(Boolean)
+        if (parts.length >= 2) {
+          return parts[1] // repo name
+        }
+      }
+      // Generic URL - use last path segment or hostname
+      const pathParts = parsed.pathname.split("/").filter(Boolean)
+      if (pathParts.length > 0) {
+        const lastPart = pathParts[pathParts.length - 1]
+        return lastPart.replace(/\.zip$/i, "")
+      }
+      return parsed.hostname
+    } catch {
+      return "source"
     }
   }
 
@@ -242,10 +282,14 @@ export default function Page() {
 
             <div className="space-y-6 lg:col-span-2">
               <FileUploader
+                inputMode={inputMode}
+                onInputModeChange={setInputMode}
                 onFilesSelected={handleFilesSelected}
                 files={files}
                 selectedLabel={selectedLabel}
                 fileCount={fileCount}
+                sourceUrl={sourceUrl}
+                onSourceUrlChange={setSourceUrl}
                 disabled={isSubmitting}
                 onClear={clearUpload}
               />

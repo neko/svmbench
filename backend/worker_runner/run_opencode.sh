@@ -28,7 +28,7 @@ cat > "${CONFIG_DIR}/config.json" << EOF
         "apiKey": "${OPENROUTER_API_KEY}"
       },
       "models": {
-        "${OPENCODE_MODEL}": { "name": "${OPENCODE_MODEL}" }
+        "audit-model": { "name": "${OPENCODE_MODEL}" }
       }
     }
   }
@@ -40,8 +40,9 @@ cd "${AGENT_DIR}"
 
 # Run OpenCode with the run subcommand
 # It reads AGENTS.md automatically for instructions
+# Use "audit-model" alias to avoid / parsing issues with OpenRouter model IDs
 timeout --signal=TERM --kill-after=30s "${AUDIT_TIMEOUT}s" \
-  opencode run -m "openrouter:${OPENCODE_MODEL}" "Follow the instructions in AGENTS.md to audit the code in audit/ and write results to submission/audit.md" \
+  opencode run -m "openrouter:audit-model" "Follow the instructions in AGENTS.md to audit the code in audit/ and write results to submission/audit.md" \
   > "${LOGS_DIR}/opencode.log" 2>&1 || true
 
 if [[ ! -s "${SUBMISSION_DIR}/audit.md" ]]; then

@@ -1,13 +1,14 @@
 import secrets
-from typing import Literal
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.core.config import settings
 from api.core.const import ALLOWED_MODELS, OPENROUTER_ALLOWED_MODELS
-from api.core.database import SessionDep
+from api.core.deps import get_db
 from api.models.payment import Payment
 from api.util.pricing import (
     REQUESTS_PER_EFFORT,
@@ -18,6 +19,7 @@ from api.util.pricing import (
 )
 from api.util.solana import verify_usdc_transfer
 
+SessionDep = Annotated[AsyncSession, Depends(get_db)]
 
 router = APIRouter(prefix='/payment', tags=['payment'])
 

@@ -195,7 +195,7 @@ async def _make_x402_payment(amount_raw: str, receiver: str, asset: str, fee_pay
         from solana.rpc.async_api import AsyncClient
         from solders.pubkey import Pubkey
         from solders.transaction import Transaction
-        from spl.token.instructions import TransferParams, transfer
+        from spl.token.instructions import TransferParams, transfer, get_associated_token_address
 
         # USDC mint and token program
         USDC_MINT = Pubkey.from_string('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
@@ -209,20 +209,12 @@ async def _make_x402_payment(amount_raw: str, receiver: str, asset: str, fee_pay
 
         logger.info(f'x402 payment: ${amount_usd:.4f} USDC to {receiver}')
 
-        # Get ATAs
-        from spl.token.async_client import AsyncToken
+        # Get ATAs (synchronous function)
+        payer_ata = get_associated_token_address(keypair.pubkey(), USDC_MINT)
+        receiver_ata = get_associated_token_address(receiver_pubkey, USDC_MINT)
 
         rpc_url = settings.PAYMENT_SOLANA_RPC_URL
         async with AsyncClient(rpc_url) as client:
-            payer_ata = await AsyncToken.get_associated_token_address(
-                USDC_MINT,
-                keypair.pubkey(),
-            )
-            receiver_ata = await AsyncToken.get_associated_token_address(
-                USDC_MINT,
-                receiver_pubkey,
-            )
-
             # Create transfer instruction
             transfer_ix = transfer(
                 TransferParams(

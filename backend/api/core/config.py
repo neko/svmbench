@@ -74,6 +74,10 @@ class Settings(BaseSettings):
     # This wallet should have USDC on Base chain
     X402_SERVICE_KEY: Secret[str] | None = None
 
+    # Telegram logging
+    TELEGRAM_BOT_TOKEN: str = ''
+    TELEGRAM_CHAT_ID: str = ''
+
     @field_validator('RABBITMQ_QUEUE_SUFFIX', mode='before')
     @classmethod
     def _normalize_queue_suffix(cls, value: str | None) -> str | None:

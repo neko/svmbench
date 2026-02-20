@@ -1,3 +1,4 @@
+import asyncio
 import secrets
 from typing import Annotated, Literal
 
@@ -19,6 +20,7 @@ from api.util.pricing import (
     get_x402_pricing,
 )
 from api.util.solana import verify_usdc_transfer
+from api.util.telegram import log_payment_received
 
 SessionDep = Annotated[AsyncSession, Depends(get_db)]
 
@@ -206,6 +208,14 @@ async def verify_payment(
     )
     session.add(payment)
     await session.commit()
+
+    # Log to Telegram (fire and forget)
+    asyncio.create_task(log_payment_received(
+        signature=request.signature,
+        amount=request.amount,
+        payer_wallet=request.payer_wallet,
+        model=request.model,
+    ))
 
     return VerifyPaymentResponse(valid=True, payment_token=payment_token)
 

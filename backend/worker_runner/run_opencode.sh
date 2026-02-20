@@ -54,10 +54,12 @@ rm -f "${SUBMISSION_DIR}/audit.md"
 # Set x402 environment for plugin
 export X402_PRIVATE_KEY
 export X402_ROUTER_URL="https://ai.xgate.run"
-export X402_PERMIT_CAP="5"  # $5 max spend per session
+export X402_PERMIT_CAP="50"  # $50 max spend per session (high effort)
 
-# Audit prompt
-AUDIT_PROMPT='You are a Solana security auditor. Analyze the code in audit/ for HIGH severity vulnerabilities that could lead to loss of funds.
+# Audit prompt - write to file for piping
+PROMPT_FILE="${LOGS_DIR}/prompt.txt"
+cat > "${PROMPT_FILE}" << 'PROMPT'
+You are a Solana security auditor. Analyze the code in audit/ for HIGH severity vulnerabilities that could lead to loss of funds.
 
 Read and understand the codebase first. Then identify any exploitable security issues.
 
@@ -76,21 +78,38 @@ Write your findings to submission/audit.md as JSON:
   ]
 }
 
-Only report HIGH severity issues. Valid JSON only.'
+Only report HIGH severity issues. Valid JSON only.
+PROMPT
 
-# Run OpenCode
+# Run OpenCode - try multiple invocation methods
 cd "${AGENT_DIR}"
+
+# Method 1: Try with --prompt flag and --print for non-interactive output
 timeout --signal=TERM --kill-after=30s "${AUDIT_TIMEOUT}s" \
-  opencode run \
-    --model "${OPENCODE_MODEL}" \
-    --provider x402 \
-    --non-interactive \
-    "${AUDIT_PROMPT}" \
-  > "${LOGS_DIR}/opencode.log" 2>&1 || true
+  opencode --model "${OPENCODE_MODEL}" --print --prompt "$(cat "${PROMPT_FILE}")" \
+  > "${LOGS_DIR}/opencode.log" 2>&1 && exit_code=0 || exit_code=$?
+
+# Check if output was generated
+if [[ -s "${SUBMISSION_DIR}/audit.md" ]]; then
+  echo "Audit completed successfully" >> "${LOGS_DIR}/runner.log"
+  exit 0
+fi
+
+# Method 2: Try piping the prompt
+if [[ $exit_code -ne 0 || ! -s "${SUBMISSION_DIR}/audit.md" ]]; then
+  echo "Method 1 failed (exit=$exit_code), trying pipe method..." >> "${LOGS_DIR}/runner.log"
+
+  timeout --signal=TERM --kill-after=30s "${AUDIT_TIMEOUT}s" \
+    bash -c "cat '${PROMPT_FILE}' | opencode --model '${OPENCODE_MODEL}'" \
+    >> "${LOGS_DIR}/opencode.log" 2>&1 || true
+fi
 
 # Check output
 if [[ ! -s "${SUBMISSION_DIR}/audit.md" ]]; then
   echo "No audit output generated" >&2
+  # Log what opencode returned
+  echo "=== OpenCode output ===" >> "${LOGS_DIR}/runner.log"
+  head -100 "${LOGS_DIR}/opencode.log" >> "${LOGS_DIR}/runner.log" 2>/dev/null || true
   # Create empty result
   echo '{"vulnerabilities":[]}' > "${SUBMISSION_DIR}/audit.md"
 fi

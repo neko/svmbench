@@ -102,8 +102,8 @@ async def _fetch_models() -> list[dict]:
             'context_length': m.get('context_length', 0),
         })
 
-    # Sort by total cost (input + output, assuming 3:1 ratio)
-    models.sort(key=lambda x: x['input_price'] * 3 + x['output_price'])
+    # Sort by total cost descending (expensive first, assuming 3:1 input/output ratio)
+    models.sort(key=lambda x: x['input_price'] * 3 + x['output_price'], reverse=True)
     return models
 
 

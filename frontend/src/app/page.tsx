@@ -296,9 +296,9 @@ export default function Page() {
                       <SelectValue placeholder="Select effort" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="low">Low (~2 min)</SelectItem>
-                      <SelectItem value="medium">Medium (~6 min)</SelectItem>
-                      <SelectItem value="high">High (~12 min)</SelectItem>
+                      <SelectItem value="low">Low</SelectItem>
+                      <SelectItem value="medium">Medium</SelectItem>
+                      <SelectItem value="high">High</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

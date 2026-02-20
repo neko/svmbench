@@ -116,17 +116,27 @@ export function PaymentOption({
     setPaymentError(null)
   }, [models])
 
-  const handleConnectPhantom = useCallback(() => {
+  const handleConnectPhantom = useCallback(async () => {
     if (phantomWallet) {
-      select(phantomWallet.adapter.name)
+      try {
+        select(phantomWallet.adapter.name)
+        await phantomWallet.adapter.connect()
+      } catch (error) {
+        console.error("Failed to connect Phantom:", error)
+      }
     } else {
       window.open('https://phantom.app/', '_blank')
     }
   }, [phantomWallet, select])
 
-  const handleConnectSolflare = useCallback(() => {
+  const handleConnectSolflare = useCallback(async () => {
     if (solflareWallet) {
-      select(solflareWallet.adapter.name)
+      try {
+        select(solflareWallet.adapter.name)
+        await solflareWallet.adapter.connect()
+      } catch (error) {
+        console.error("Failed to connect Solflare:", error)
+      }
     } else {
       window.open('https://solflare.com/', '_blank')
     }

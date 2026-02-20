@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.core.config import settings
-from api.core.const import ALLOWED_MODELS, OPENROUTER_ALLOWED_MODELS, X402_ALLOWED_MODELS
+from api.core.const import ALLOWED_MODELS, OPENROUTER_ALLOWED_MODELS
 from api.core.deps import get_db
 from api.models.payment import Payment
 from api.util.pricing import (
@@ -18,6 +18,9 @@ from api.util.pricing import (
     calculate_total_price,
     get_all_model_prices,
     get_pricing_breakdown,
+    get_x402_models,
+    get_x402_pricing,
+    calculate_model_price_sync,
 )
 from api.util.solana import verify_usdc_transfer
 
@@ -26,13 +29,20 @@ SessionDep = Annotated[AsyncSession, Depends(get_db)]
 router = APIRouter(prefix='/payment', tags=['payment'])
 
 
+class X402ModelInfo(BaseModel):
+    id: str
+    name: str
+    price: float  # raw x402 price per request
+    audit_price: float  # total price for audit (with markup)
+
+
 class PaymentConfigResponse(BaseModel):
     enabled: bool
     receiver_wallet: str | None
     markup: float
     markup_percent: int
     requests_per_audit: int  # fixed 2 requests per model audit
-    x402_models: list[str]  # available x402 models
+    x402_models: list[X402ModelInfo]  # available x402 models with full info
     model_prices: dict[str, float]  # model -> total price (includes markup)
 
 
@@ -66,15 +76,27 @@ async def get_payment_config() -> PaymentConfigResponse:
 
     x402 uses flat per-request pricing. Each audit makes 2 API calls per model.
     Price = x402_model_price × 2 × (1 + markup)
+
+    Models are fetched dynamically from x402 discovery endpoint.
     """
-    # Get prices for x402 models only
-    from api.util.pricing import get_x402_pricing, calculate_model_price_sync
-
+    # Fetch models and prices from x402 discovery
+    x402_models_raw = await get_x402_models()
     x402_prices = await get_x402_pricing()
-    model_prices = {}
 
-    for model in X402_ALLOWED_MODELS:
-        model_prices[model] = calculate_model_price_sync(model, x402_prices)
+    # Build model info list with audit prices
+    x402_models: list[X402ModelInfo] = []
+    model_prices: dict[str, float] = {}
+
+    for model in x402_models_raw:
+        model_id = model['id']
+        audit_price = calculate_model_price_sync(model_id, x402_prices)
+        x402_models.append(X402ModelInfo(
+            id=model_id,
+            name=model['name'],
+            price=model['price'],
+            audit_price=audit_price,
+        ))
+        model_prices[model_id] = audit_price
 
     return PaymentConfigResponse(
         enabled=settings.PAYMENT_ENABLED,
@@ -82,7 +104,7 @@ async def get_payment_config() -> PaymentConfigResponse:
         markup=settings.PAYMENT_MARKUP,
         markup_percent=int(settings.PAYMENT_MARKUP * 100),
         requests_per_audit=REQUESTS_PER_AUDIT,
-        x402_models=sorted(X402_ALLOWED_MODELS),
+        x402_models=x402_models,
         model_prices=model_prices,
     )
 

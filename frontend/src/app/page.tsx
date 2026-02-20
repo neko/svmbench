@@ -4,7 +4,7 @@ import { ArrowUpRight01Icon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { AppFooter } from "@/components/app-footer"
 import { AppHeader } from "@/components/app-header"
 import { FileUploader } from "@/components/file-uploader"
@@ -29,30 +29,11 @@ import { useLocalStorage } from "@/hooks/use-local-storage"
 import { useSessionStorage } from "@/hooks/use-session-storage"
 import { API_BASE } from "@/lib/api"
 import { startJob, startJobFromUrl } from "@/lib/jobs"
+import { fetchPaymentConfig, type X402ModelInfo } from "@/lib/payment"
 import { addRecentJob, type RecentJob } from "@/lib/recent-jobs"
 import { inferPackageName } from "@/lib/upload-utils"
 import { createZipFromFiles } from "@/lib/zip"
 import { useUploadStore } from "@/store/upload-store"
-
-// x402 models - pay with USDC
-const X402_MODELS = [
-  { value: "llm-claude-opus", label: "Claude Opus 4.6" },
-  { value: "llm-claude-sonnet", label: "Claude Sonnet 4.5" },
-  { value: "llm-gpt-5.2-codex", label: "GPT-5.2 Codex" },
-  { value: "llm-gpt-5.2", label: "GPT-5.2" },
-  { value: "llm-deepseek", label: "DeepSeek V3" },
-  { value: "llm-deepseek-r1", label: "DeepSeek R1" },
-  { value: "llm-gemini-pro", label: "Gemini 2.5 Pro" },
-  { value: "llm-grok", label: "Grok 4" },
-  { value: "llm-kimi", label: "Kimi K2.5" },
-  { value: "llm-claude-haiku", label: "Claude Haiku 4.5" },
-  { value: "llm-gemini-flash", label: "Gemini 2.5 Flash" },
-  { value: "llm-minimax", label: "MiniMax M2.5" },
-  { value: "llm-glm", label: "GLM-5" },
-  { value: "llm-llama", label: "Llama 3.3 70B" },
-  { value: "llm-qwen", label: "Qwen3 235B" },
-  { value: "llm-mistral", label: "Mistral Large 3" },
-]
 
 const OPENAI_MODELS = [
   { value: "codex-gpt-5.2", label: "codex-gpt-5.2" },
@@ -79,8 +60,28 @@ export default function Page() {
   const { inputMode, files, packageName, sourceUrl, setInputMode, setUpload, setSourceUrl, clearUpload } = useUploadStore()
   const [apiKey, setApiKey] = useSessionStorage("svmbench.apiKey", "")
   const [provider, setProvider] = useState<Provider>("x402")
-  const [selectedModels, setSelectedModels] = useState<string[]>(["llm-claude-opus"])
+  const [selectedModels, setSelectedModels] = useState<string[]>([])
   const [effort, setEffort] = useState<"low" | "medium" | "high">("medium")
+  const [x402Models, setX402Models] = useState<X402ModelInfo[]>([])
+  const [x402ModelsLoading, setX402ModelsLoading] = useState(true)
+
+  // Fetch x402 models from API on mount
+  useEffect(() => {
+    fetchPaymentConfig()
+      .then((config) => {
+        setX402Models(config.x402_models)
+        // Set default selection to first model if none selected
+        if (config.x402_models.length > 0 && selectedModels.length === 0) {
+          setSelectedModels([config.x402_models[0].id])
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to fetch x402 models:", err)
+      })
+      .finally(() => {
+        setX402ModelsLoading(false)
+      })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [recentJobs, setRecentJobs] = useLocalStorage<RecentJob[]>(
@@ -102,8 +103,14 @@ export default function Page() {
     return null
   }, [files, packageName])
 
+  // Convert x402 models to the same format as other models
+  const x402ModelOptions = useMemo(() =>
+    x402Models.map((m) => ({ value: m.id, label: m.name })),
+    [x402Models]
+  )
+
   const models = provider === "x402"
-    ? X402_MODELS
+    ? x402ModelOptions
     : provider === "openrouter"
     ? OPENROUTER_MODELS
     : OPENAI_MODELS
@@ -132,7 +139,7 @@ export default function Page() {
       setProvider(value)
       // Reset models to first available for new provider
       if (value === "x402") {
-        setSelectedModels([X402_MODELS[0].value])
+        setSelectedModels(x402Models.length > 0 ? [x402Models[0].id] : [])
       } else if (value === "openrouter") {
         setSelectedModels([OPENROUTER_MODELS[0].value])
       } else {
@@ -143,7 +150,7 @@ export default function Page() {
         clearPaymentToken()
       }
     },
-    [clearPaymentToken],
+    [clearPaymentToken, x402Models],
   )
 
   const handleModelToggle = useCallback(

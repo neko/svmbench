@@ -15,12 +15,20 @@ export const USDC_MINT = new PublicKey(
 
 export type EffortLevel = "low" | "medium" | "high"
 
+export interface X402ModelInfo {
+  id: string
+  name: string
+  price: number // raw x402 price per request
+  audit_price: number // total price for audit (with markup)
+}
+
 export interface PaymentConfig {
   enabled: boolean
   receiver_wallet: string | null
   markup: number
   markup_percent: number
   requests_per_audit: number
+  x402_models: X402ModelInfo[] // available x402 models with full info
   model_prices: Record<string, number> // model -> total price (includes markup)
 }
 

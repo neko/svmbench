@@ -34,6 +34,11 @@ _x402_cache_timestamp: datetime | None = None
 _x402_cache_lock = asyncio.Lock()
 X402_CACHE_TTL = timedelta(hours=1)
 
+# Cache for x402 models: list of {id, name, price, endpoint}
+_x402_models_cache: list[dict] = []
+_x402_models_cache_timestamp: datetime | None = None
+_x402_models_cache_lock = asyncio.Lock()
+
 # Map our model names to x402 model IDs
 MODEL_TO_X402_ID: dict[str, str] = {
     # OpenAI models
@@ -94,12 +99,17 @@ def _parse_price(price_str: str) -> float:
         return 0.0
 
 
-async def _fetch_x402_pricing() -> dict[str, float]:
-    """Fetch pricing from x402 discovery endpoint."""
+async def _fetch_x402_discovery() -> dict:
+    """Fetch full discovery data from x402 endpoint."""
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(X402_DISCOVERY_URL)
         response.raise_for_status()
-        data = response.json()
+        return response.json()
+
+
+async def _fetch_x402_pricing() -> dict[str, float]:
+    """Fetch pricing from x402 discovery endpoint."""
+    data = await _fetch_x402_discovery()
 
     prices: dict[str, float] = {}
 
@@ -113,6 +123,58 @@ async def _fetch_x402_pricing() -> dict[str, float]:
                     prices[service_id] = price
 
     return prices
+
+
+async def _fetch_x402_models() -> list[dict]:
+    """Fetch LLM models from x402 discovery endpoint."""
+    data = await _fetch_x402_discovery()
+
+    models: list[dict] = []
+
+    # x402 uses categories -> list of services structure
+    # LLM models are typically under 'llm' category
+    for category_name, category_services in data.get('categories', {}).items():
+        for service in category_services:
+            service_id = service.get('id', '')
+            if service_id.startswith('llm-'):
+                price = _parse_price(service.get('price', ''))
+                models.append({
+                    'id': service_id,
+                    'name': service.get('name', service_id),
+                    'price': price,
+                    'endpoint': service.get('endpoint', ''),
+                })
+
+    # Sort by price (cheapest first) then by name
+    models.sort(key=lambda m: (m['price'], m['name']))
+
+    return models
+
+
+async def get_x402_models() -> list[dict]:
+    """Get x402 LLM models (cached for 1 hour)."""
+    global _x402_models_cache, _x402_models_cache_timestamp
+
+    async with _x402_models_cache_lock:
+        now = datetime.utcnow()
+        if _x402_models_cache_timestamp and (now - _x402_models_cache_timestamp) < X402_CACHE_TTL and _x402_models_cache:
+            return _x402_models_cache
+
+        try:
+            _x402_models_cache = await _fetch_x402_models()
+            _x402_models_cache_timestamp = now
+            logger.info(f'Refreshed x402 models: {len(_x402_models_cache)} LLM models')
+        except Exception as e:
+            logger.warning(f'Failed to fetch x402 models: {e}')
+            if _x402_models_cache:
+                return _x402_models_cache
+            # Return fallback models from FALLBACK_X402_PRICES
+            return [
+                {'id': model_id, 'name': model_id.replace('llm-', '').replace('-', ' ').title(), 'price': price, 'endpoint': ''}
+                for model_id, price in FALLBACK_X402_PRICES.items()
+            ]
+
+    return _x402_models_cache
 
 
 async def get_x402_pricing() -> dict[str, float]:

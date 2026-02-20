@@ -258,17 +258,16 @@ async def start_job(
     _require_allowed_provider(form.provider)
     _require_allowed_effort(form.effort)
 
-    if not form.models:
-        raise HTTPException(status_code=412, detail='At least one model is required')
+    if not form.model:
+        raise HTTPException(status_code=412, detail='Model is required')
 
-    for model in form.models:
-        _require_allowed_model(model, form.provider)
+    _require_allowed_model(form.model, form.provider)
 
     # Check for payment token - if valid, use x402 paid mode
     paid_with_token = False
     if form.payment_token:
         paid_with_token = await _validate_and_consume_payment_token(
-            session, form.payment_token, form.effort, form.models
+            session, form.payment_token, form.effort, [form.model]
         )
         if not paid_with_token:
             raise HTTPException(status_code=402, detail='Invalid or expired payment token')
@@ -295,56 +294,46 @@ async def start_job(
     try:
         bundle = build_secret_bundle(upload=form.file, openai_token=openai_token, key_mode=key_mode, provider=form.provider, effort=form.effort)
 
-        jobs: list[Job] = []
-        secret_refs: list[str] = []
+        job_id = uuid.uuid4()
+        secret_ref = os.urandom(32).hex()
+        result_token = os.urandom(32).hex()
 
-        for model in form.models:
-            job_id = uuid.uuid4()
-            secret_ref = os.urandom(32).hex()
-            result_token = os.urandom(32).hex()
+        await secret_storage.save_secret(secret_ref, bundle)
 
-            await secret_storage.save_secret(secret_ref, bundle)
-            secret_refs.append(secret_ref)
-
-            job = Job(
-                id=job_id,
-                batch_id=batch_id,
-                status=JobStatus.queued,
-                user_id=token.user_id,
-                secret_ref=secret_ref,
-                result_token=result_token,
-                model=model,
-                effort=form.effort,
-                file_name=(form.file.filename or 'files.zip')[:128],
-            )
-            session.add(job)
-            jobs.append(job)
-
+        job = Job(
+            id=job_id,
+            batch_id=batch_id,
+            status=JobStatus.queued,
+            user_id=token.user_id,
+            secret_ref=secret_ref,
+            result_token=result_token,
+            model=form.model,
+            effort=form.effort,
+            file_name=(form.file.filename or 'files.zip')[:128],
+        )
+        session.add(job)
         await session.commit()
 
         try:
-            for job in jobs:
-                await publisher.publish_job_start(
-                    job_id=str(job.id),
-                    secret_ref=job.secret_ref or '',
-                    model=job.model,
-                    result_token=job.result_token or '',
-                )
+            await publisher.publish_job_start(
+                job_id=str(job.id),
+                secret_ref=job.secret_ref or '',
+                model=job.model,
+                result_token=job.result_token or '',
+            )
         except Exception as err:
-            for secret_ref in secret_refs:
-                with suppress(Exception):
-                    await secret_storage.delete_secret(secret_ref)
-            for job in jobs:
-                await session.delete(job)
+            with suppress(Exception):
+                await secret_storage.delete_secret(secret_ref)
+            await session.delete(job)
             await session.commit()
             raise HTTPException(
                 status_code=502,
-                detail='Failed to enqueue jobs',
+                detail='Failed to enqueue job',
             ) from err
 
         return StartJobResponse(
             batch_id=batch_id,
-            jobs=[BatchJobItem.model_validate(job) for job in jobs],
+            jobs=[BatchJobItem.model_validate(job)],
         )
     finally:
         await form.file.close()
@@ -361,17 +350,16 @@ async def start_job_from_url(
     _require_allowed_provider(request.provider)
     _require_allowed_effort(request.effort)
 
-    if not request.models:
-        raise HTTPException(status_code=412, detail='At least one model is required')
+    if not request.model:
+        raise HTTPException(status_code=412, detail='Model is required')
 
-    for model in request.models:
-        _require_allowed_model(model, request.provider)
+    _require_allowed_model(request.model, request.provider)
 
     # Check for payment token - if valid, use x402 paid mode
     paid_with_token = False
     if request.payment_token:
         paid_with_token = await _validate_and_consume_payment_token(
-            session, request.payment_token, request.effort, request.models
+            session, request.payment_token, request.effort, [request.model]
         )
         if not paid_with_token:
             raise HTTPException(status_code=402, detail='Invalid or expired payment token')
@@ -420,56 +408,46 @@ async def start_job_from_url(
         effort=request.effort,
     )
 
-    jobs: list[Job] = []
-    secret_refs: list[str] = []
+    job_id = uuid.uuid4()
+    secret_ref = os.urandom(32).hex()
+    result_token = os.urandom(32).hex()
 
-    for model in request.models:
-        job_id = uuid.uuid4()
-        secret_ref = os.urandom(32).hex()
-        result_token = os.urandom(32).hex()
+    await secret_storage.save_secret(secret_ref, bundle)
 
-        await secret_storage.save_secret(secret_ref, bundle)
-        secret_refs.append(secret_ref)
-
-        job = Job(
-            id=job_id,
-            batch_id=batch_id,
-            status=JobStatus.queued,
-            user_id=token.user_id,
-            secret_ref=secret_ref,
-            result_token=result_token,
-            model=model,
-            effort=request.effort,
-            file_name=filename[:128],
-        )
-        session.add(job)
-        jobs.append(job)
-
+    job = Job(
+        id=job_id,
+        batch_id=batch_id,
+        status=JobStatus.queued,
+        user_id=token.user_id,
+        secret_ref=secret_ref,
+        result_token=result_token,
+        model=request.model,
+        effort=request.effort,
+        file_name=filename[:128],
+    )
+    session.add(job)
     await session.commit()
 
     try:
-        for job in jobs:
-            await publisher.publish_job_start(
-                job_id=str(job.id),
-                secret_ref=job.secret_ref or '',
-                model=job.model,
-                result_token=job.result_token or '',
-            )
+        await publisher.publish_job_start(
+            job_id=str(job.id),
+            secret_ref=job.secret_ref or '',
+            model=job.model,
+            result_token=job.result_token or '',
+        )
     except Exception as err:
-        for secret_ref in secret_refs:
-            with suppress(Exception):
-                await secret_storage.delete_secret(secret_ref)
-        for job in jobs:
-            await session.delete(job)
+        with suppress(Exception):
+            await secret_storage.delete_secret(secret_ref)
+        await session.delete(job)
         await session.commit()
         raise HTTPException(
             status_code=502,
-            detail='Failed to enqueue jobs',
+            detail='Failed to enqueue job',
         ) from err
 
     return StartJobResponse(
         batch_id=batch_id,
-        jobs=[BatchJobItem.model_validate(job) for job in jobs],
+        jobs=[BatchJobItem.model_validate(job)],
     )
 
 

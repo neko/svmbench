@@ -53,7 +53,7 @@ export interface CalculatePriceResponse {
 }
 
 export async function calculatePrice(
-  models: string[],
+  model: string,
   effort: EffortLevel = "medium",
 ): Promise<CalculatePriceResponse> {
   const response = await fetch(`${API_BASE}/v1/payment/calculate`, {
@@ -61,7 +61,7 @@ export async function calculatePrice(
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ models, effort }),
+    body: JSON.stringify({ models: [model], effort }),
   })
 
   if (!response.ok) {
@@ -132,8 +132,8 @@ export interface VerifyPaymentRequest {
   signature: string
   payer_wallet: string
   amount: number
-  models: string[]
-  effort: EffortLevel // kept for compatibility
+  model: string
+  effort: EffortLevel
 }
 
 export interface VerifyPaymentResponse {
@@ -165,20 +165,14 @@ export async function verifyPayment(
 // x402 uses flat per-request pricing, price varies by effort level
 export function calculatePriceFromConfig(
   config: PaymentConfig,
-  models: string[],
+  model: string,
   effort: EffortLevel = "medium",
 ): number {
   const effortPrices = config.model_prices[effort]
-  if (!effortPrices) {
+  if (!effortPrices || !model) {
     return 0
   }
 
-  let total = 0
-  for (const model of models) {
-    const price = effortPrices[model]
-    if (price !== undefined) {
-      total += price
-    }
-  }
-  return Math.round(total * 100) / 100
+  const price = effortPrices[model]
+  return price !== undefined ? Math.round(price * 100) / 100 : 0
 }

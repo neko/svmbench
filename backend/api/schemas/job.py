@@ -12,20 +12,11 @@ from api.util.zip_validate import validate_upload_zip
 
 class StartJobFromUrlRequest(BaseModel):
     source_url: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-    models: list[str]
+    model: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
     openai_key: Annotated[str | None, StringConstraints(strip_whitespace=True, min_length=1)] = None
     provider: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] = 'openai'
     effort: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] = 'medium'
     payment_token: Annotated[str | None, StringConstraints(strip_whitespace=True, min_length=1)] = None
-
-    @field_validator('models', mode='before')
-    @classmethod
-    def parse_models(cls, value: str | list[str]) -> list[str]:
-        if isinstance(value, str):
-            return [m.strip() for m in value.split(',') if m.strip()]
-        if isinstance(value, list) and len(value) == 1 and isinstance(value[0], str) and ',' in value[0]:
-            return [m.strip() for m in value[0].split(',') if m.strip()]
-        return [m.strip() for m in value if m.strip()]
 
     @model_validator(mode='after')
     def require_openai_key_or_payment(self) -> 'StartJobFromUrlRequest':
@@ -51,14 +42,14 @@ class StartJobForm(StartJobFromUrlRequest):
     def as_form(
         cls,
         file: Annotated[UploadFile, File()],
-        models: Annotated[list[str], Form()] = [],
+        model: Annotated[str, Form()],
         openai_key: Annotated[str | None, Form()] = None,
         provider: Annotated[str, Form()] = 'openai',
         effort: Annotated[str, Form()] = 'medium',
         payment_token: Annotated[str | None, Form()] = None,
     ) -> 'StartJobForm':
         try:
-            return cls(models=models, openai_key=openai_key, provider=provider, effort=effort, payment_token=payment_token, file=file)
+            return cls(model=model, openai_key=openai_key, provider=provider, effort=effort, payment_token=payment_token, file=file)
         except ValidationError as exc:
             errors = exc.errors()
             messages = []

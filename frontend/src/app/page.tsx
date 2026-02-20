@@ -10,13 +10,7 @@ import { AppHeader } from "@/components/app-header"
 import { FileUploader } from "@/components/file-uploader"
 import { PaymentOption, usePaymentMode } from "@/components/payment-option"
 import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover"
 import {
   Select,
   SelectContent,
@@ -60,7 +54,7 @@ export default function Page() {
   const { inputMode, files, packageName, sourceUrl, setInputMode, setUpload, setSourceUrl, clearUpload } = useUploadStore()
   const [apiKey, setApiKey] = useSessionStorage("svmbench.apiKey", "")
   const [provider, setProvider] = useState<Provider>("x402")
-  const [selectedModels, setSelectedModels] = useState<string[]>([])
+  const [selectedModel, setSelectedModel] = useState<string>("")
   const [effort, setEffort] = useState<"low" | "medium" | "high">("medium")
   const [x402Models, setX402Models] = useState<X402ModelInfo[]>([])
   const [x402ModelsLoading, setX402ModelsLoading] = useState(true)
@@ -71,8 +65,8 @@ export default function Page() {
       .then((config) => {
         setX402Models(config.x402_models)
         // Set default selection to first model if none selected
-        if (config.x402_models.length > 0 && selectedModels.length === 0) {
-          setSelectedModels([config.x402_models[0].id])
+        if (config.x402_models.length > 0 && !selectedModel) {
+          setSelectedModel(config.x402_models[0].id)
         }
       })
       .catch((err) => {
@@ -125,7 +119,7 @@ export default function Page() {
     : keyPredefined || apiKey.trim().length > 0
 
   const canSubmit =
-    hasValidInput && !isSubmitting && !isAuthLoading && isAuthorized && selectedModels.length > 0 && hasValidAuth
+    hasValidInput && !isSubmitting && !isAuthLoading && isAuthorized && !!selectedModel && hasValidAuth
 
   const handleFilesSelected = useCallback(
     (selected: File[]) => {
@@ -137,13 +131,13 @@ export default function Page() {
   const handleProviderChange = useCallback(
     (value: Provider) => {
       setProvider(value)
-      // Reset models to first available for new provider
+      // Reset model to first available for new provider
       if (value === "x402") {
-        setSelectedModels(x402Models.length > 0 ? [x402Models[0].id] : [])
+        setSelectedModel(x402Models.length > 0 ? x402Models[0].id : "")
       } else if (value === "openrouter") {
-        setSelectedModels([OPENROUTER_MODELS[0].value])
+        setSelectedModel(OPENROUTER_MODELS[0].value)
       } else {
-        setSelectedModels([OPENAI_MODELS[0].value])
+        setSelectedModel(OPENAI_MODELS[0].value)
       }
       // Clear payment token when switching away from x402
       if (value !== "x402") {
@@ -153,25 +147,13 @@ export default function Page() {
     [clearPaymentToken, x402Models],
   )
 
-  const handleModelToggle = useCallback(
-    (modelValue: string, checked: boolean) => {
-      setSelectedModels((prev) => {
-        if (checked) {
-          return [...prev, modelValue]
-        }
-        return prev.filter((m) => m !== modelValue)
-      })
-    },
-    [],
-  )
-
   const handleSubmit = useCallback(async (directToken?: string) => {
     if (!isAuthorized) {
       setSubmitError("Authorize with GitHub to start analysis.")
       return
     }
-    if (selectedModels.length === 0) {
-      setSubmitError("Select at least one model.")
+    if (!selectedModel) {
+      setSubmitError("Select a model.")
       return
     }
 
@@ -189,11 +171,11 @@ export default function Page() {
 
       if (inputMode === "url" && sourceUrl) {
         name = extractNameFromUrl(sourceUrl)
-        response = await startJobFromUrl(sourceUrl, selectedModels, authKey, provider, effort, token)
+        response = await startJobFromUrl(sourceUrl, selectedModel, authKey, provider, effort, token)
       } else if (files && fileCount > 0) {
         name = selectedLabel ?? "files"
         const zipFile = await createZipFromFiles(files, name)
-        response = await startJob(zipFile, selectedModels, authKey, provider, effort, token)
+        response = await startJob(zipFile, selectedModel, authKey, provider, effort, token)
       } else {
         setSubmitError("Please provide files or a URL")
         return
@@ -201,16 +183,10 @@ export default function Page() {
 
       clearPaymentToken()
 
-      for (const job of response.jobs) {
-        addRecentJob({
-          job_id: job.job_id,
-          label: `${name} (${job.model})`,
-          created_at_ms: Date.now(),
-        })
-      }
+      const job = response.jobs[0]
       setRecentJobs(addRecentJob({
-        job_id: response.batch_id,
-        label: `${name} (${selectedModels.length} models)`,
+        job_id: job.job_id,
+        label: `${name} (${job.model})`,
         created_at_ms: Date.now(),
       }))
       router.push(`/results?batch_id=${response.batch_id}`)
@@ -221,7 +197,7 @@ export default function Page() {
     }
   }, [
     isAuthorized,
-    selectedModels,
+    selectedModel,
     provider,
     apiKey,
     paymentToken,
@@ -368,56 +344,21 @@ export default function Page() {
                 </div>
 
                 <div className="grid gap-1">
-                  <Label className="text-xs text-foreground">
-                    Models
+                  <Label htmlFor="model-select" className="text-xs text-foreground">
+                    Model
                   </Label>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <button
-                        type="button"
-                        className="border-input bg-input/20 dark:bg-input/30 dark:hover:bg-input/50 focus-visible:border-ring focus-visible:ring-ring/30 flex h-7 w-full items-center justify-between gap-1.5 rounded-md border px-2 py-1.5 text-xs/relaxed transition-colors focus-visible:ring-2 outline-none"
-                      >
-                        <span className="truncate text-muted-foreground">
-                          {selectedModels.length === 0
-                            ? "Select models..."
-                            : `${selectedModels.length} model${selectedModels.length > 1 ? "s" : ""} selected`}
-                        </span>
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          width="14"
-                          height="14"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          className="shrink-0 text-muted-foreground"
-                        >
-                          <path d="m7 15 5 5 5-5" />
-                          <path d="m7 9 5-5 5 5" />
-                        </svg>
-                      </button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-1" align="start">
-                      <div className="max-h-64 space-y-0.5 overflow-y-auto">
-                        {models.map((m) => (
-                          <label
-                            key={m.value}
-                            className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-muted/50"
-                          >
-                            <Checkbox
-                              checked={selectedModels.includes(m.value)}
-                              onCheckedChange={(checked) =>
-                                handleModelToggle(m.value, checked === true)
-                              }
-                            />
-                            <span className="text-xs">{m.label}</span>
-                          </label>
-                        ))}
-                      </div>
-                    </PopoverContent>
-                  </Popover>
+                  <Select value={selectedModel} onValueChange={setSelectedModel}>
+                    <SelectTrigger id="model-select" className="w-full">
+                      <SelectValue placeholder="Select model" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {models.map((m) => (
+                        <SelectItem key={m.value} value={m.value}>
+                          {m.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
 
                 <div className="grid gap-1">
@@ -443,7 +384,7 @@ export default function Page() {
                   <PaymentOption
                     provider={provider}
                     effort={effort}
-                    models={selectedModels}
+                    model={selectedModel}
                     apiKey={apiKey}
                     onApiKeyChange={setApiKey}
                     onPaymentComplete={setPaymentToken}

@@ -17,7 +17,7 @@ import {
 interface PaymentOptionProps {
   provider: "openai" | "openrouter" | "x402"
   effort: EffortLevel
-  models: string[]
+  model: string
   apiKey: string
   onApiKeyChange: (key: string) => void
   onPaymentComplete: (paymentToken: string) => void
@@ -44,7 +44,7 @@ const SolflareLogo = () => (
 export function PaymentOption({
   provider,
   effort,
-  models,
+  model,
   apiKey,
   onApiKeyChange,
   onPaymentComplete,
@@ -78,7 +78,7 @@ export function PaymentOption({
 
   // Quick client-side price from config (effort-aware)
   const quickPrice = paymentConfig
-    ? calculatePriceFromConfig(paymentConfig, models, effort)
+    ? calculatePriceFromConfig(paymentConfig, model, effort)
     : 0
 
   const displayPrice = serverPrice ?? quickPrice
@@ -96,25 +96,25 @@ export function PaymentOption({
     }
   }, [provider])
 
-  // Fetch price when models or effort changes (x402 only)
+  // Fetch price when model or effort changes (x402 only)
   useEffect(() => {
-    if (provider !== 'x402' || !paymentConfig?.enabled || models.length === 0) {
+    if (provider !== 'x402' || !paymentConfig?.enabled || !model) {
       setServerPrice(null)
       return
     }
 
     setIsLoadingPrice(true)
-    calculatePrice(models, effort)
+    calculatePrice(model, effort)
       .then((result) => setServerPrice(result.total))
       .catch(() => setServerPrice(null))
       .finally(() => setIsLoadingPrice(false))
-  }, [models, effort, paymentConfig?.enabled, provider])
+  }, [model, effort, paymentConfig?.enabled, provider])
 
-  // Reset payment state when models change
+  // Reset payment state when model changes
   useEffect(() => {
     setPaymentSuccess(false)
     setPaymentError(null)
-  }, [models])
+  }, [model])
 
   const handleConnectPhantom = useCallback(async () => {
     if (phantomWallet) {
@@ -147,8 +147,8 @@ export function PaymentOption({
       return
     }
 
-    if (models.length === 0) {
-      setPaymentError("Select at least one model")
+    if (!model) {
+      setPaymentError("Select a model")
       return
     }
 
@@ -182,7 +182,7 @@ export function PaymentOption({
         signature,
         payer_wallet: publicKey.toBase58(),
         amount: priceToCharge,
-        models,
+        model,
         effort,
       })
 
@@ -209,7 +209,7 @@ export function PaymentOption({
     connection,
     serverPrice,
     quickPrice,
-    models,
+    model,
     effort,
     onPaymentComplete,
     onStartAnalysis,
@@ -244,7 +244,7 @@ export function PaymentOption({
     <div className="space-y-3">
       <div className="flex items-center justify-between text-xs">
         <span className="text-muted-foreground">
-          {models.length} model{models.length !== 1 ? "s" : ""}
+          {model || "No model selected"}
         </span>
         <span className="font-medium text-foreground">
           {isLoadingPrice ? "..." : `$${displayPrice.toFixed(2)} USDC`}
@@ -291,7 +291,7 @@ export function PaymentOption({
           <button
             type="button"
             onClick={handlePaymentAndStart}
-            disabled={disabled || isProcessing || models.length === 0 || isLoadingPrice || isSubmitting}
+            disabled={disabled || isProcessing || !model || isLoadingPrice || isSubmitting}
             className="flex h-7 w-full items-center justify-center gap-1.5 rounded-md border px-3 text-xs font-medium transition-all hover:opacity-90 disabled:opacity-50"
             style={{
               backgroundColor: isPhantom ? '#AB9FF2' : isSolflare ? '#FFEF46' : '#AB9FF2',

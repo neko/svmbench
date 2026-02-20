@@ -118,7 +118,7 @@ export async function setJobPublic(
 
 export interface StartJobOptions {
   file: File
-  models: string[]
+  model: string
   apiKey?: string
   provider?: string
   effort?: string
@@ -127,7 +127,7 @@ export interface StartJobOptions {
 
 export async function startJob(
   file: File,
-  models: string[],
+  model: string,
   apiKey: string,
   provider: string = "openai",
   effort: string = "medium",
@@ -135,7 +135,7 @@ export async function startJob(
 ): Promise<StartJobResponse> {
   const body = new FormData()
   body.append("file", file)
-  body.append("models", models.join(","))
+  body.append("model", model)
   body.append("provider", provider)
   body.append("effort", effort)
 
@@ -161,7 +161,7 @@ export async function startJob(
 
 export async function startJobFromUrl(
   sourceUrl: string,
-  models: string[],
+  model: string,
   apiKey: string,
   provider: string = "openai",
   effort: string = "medium",
@@ -169,7 +169,7 @@ export async function startJobFromUrl(
 ): Promise<StartJobResponse> {
   const payload: Record<string, string> = {
     source_url: sourceUrl,
-    models: models.join(","),
+    model,
     provider,
     effort,
   }

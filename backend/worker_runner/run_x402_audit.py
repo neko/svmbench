@@ -41,30 +41,10 @@ EFFORT_CONFIG = {
     },
     'high': {
         'max_tokens': 16384,
-        'phases': ['file_select', 'thorough_scan', 'access_control', 'state_handling', 'arithmetic', 'deep_dive', 'verify'],
+        'phases': ['file_select', 'thorough_scan', 'permissions', 'state', 'value_flow', 'deep_dive', 'verify'],
     },
 }
 
-VULNERABILITY_CLASSES = {
-    'access_control': [
-        'missing signer checks',
-        'missing owner validation',
-        'unauthorized cpi calls',
-        'privilege escalation',
-    ],
-    'state_handling': [
-        'account data matching issues',
-        'type cosplay / missing discriminator',
-        'reinitialization attacks',
-        'improper account closing',
-        'missing rent-exemption checks',
-    ],
-    'arithmetic': [
-        'integer overflow/underflow',
-        'precision loss in calculations',
-        'fee calculation errors',
-    ],
-}
 
 
 def get_file_tree(directory: Path, prefix: str = '') -> list[str]:
@@ -149,48 +129,20 @@ def call_llm(messages: list[dict], model: str, max_tokens: int = 8192, max_retri
 def phase_file_select(file_tree: str, rust_files: list[str], effort: str) -> list[str]:
     """Phase 1: Ask AI which files to analyze."""
 
-    if effort == 'high':
-        prompt = f"""you are a senior solana security auditor preparing for a comprehensive vulnerability assessment.
+    prompt = f"""you are a solana security auditor. select which files to review.
 
-codebase structure:
+directory structure:
 ```
 {file_tree}
 ```
 
-rust files available:
+rust files:
 {chr(10).join(f'- {f}' for f in rust_files)}
 
-select ALL files that could contain security-relevant logic. be thorough - it's better to include too many than miss a critical file. include:
-- all instruction handlers and entry points
-- state/account definitions
-- any utility functions that handle accounts or tokens
-- cpi-related code
-- any custom validation logic
-
-skip only: tests, build configs, migrations, documentation.
-
-respond with ONLY a json array of file paths:
-["path/to/file.rs", ...]
-"""
-    else:
-        prompt = f"""you are auditing a solana program for vulnerabilities.
-
-codebase structure:
-```
-{file_tree}
-```
-
-rust files available:
-{chr(10).join(f'- {f}' for f in rust_files)}
-
-reply with ONLY a json array of filenames you want to read for the audit.
-focus on: program logic, instruction handlers, state management.
-skip: tests, configs, build artifacts.
-
-example: ["programs/vault/src/lib.rs", "programs/vault/src/state.rs"]
+return a json array of files to audit. include program logic, skip tests/configs.
+["path/file.rs", ...]
 """
 
-    config = EFFORT_CONFIG.get(effort, EFFORT_CONFIG['medium'])
     messages = [{'role': 'user', 'content': prompt}]
     response = call_llm(messages, CODEX_MODEL, max_tokens=2048)
 
@@ -211,33 +163,28 @@ def phase_basic_scan(file_contents: dict[str, str], effort: str) -> dict:
         for path, content in file_contents.items()
     )
 
-    prompt = f"""analyze these solana program files for HIGH severity vulnerabilities that could lead to loss of funds.
+    prompt = f"""you are auditing this solana program for security vulnerabilities.
 
 {files_text}
 
-check for:
-- missing signer/owner checks
-- account validation issues
-- integer overflow/underflow
-- improper account closing
-- reinitialization vulnerabilities
+first, understand what this program does. then identify any HIGH severity vulnerabilities that could result in unauthorized fund transfers, theft of assets, or permanent loss of user funds.
 
-respond with ONLY valid json:
+only report issues that are actually exploitable. if you find nothing critical, that's okay.
+
+respond with json only:
 {{
   "vulnerabilities": [
     {{
-      "title": "vulnerability title",
+      "title": "clear title",
       "severity": "high",
-      "summary": "precise summary",
-      "description": [{{"file": "path.rs", "line_start": 10, "line_end": 20, "desc": "issue"}}],
-      "impact": "how funds are lost",
-      "proof_of_concept": "attack steps",
-      "remediation": "fix"
+      "summary": "what the bug is",
+      "description": [{{"file": "path.rs", "line_start": N, "line_end": M, "desc": "technical details"}}],
+      "impact": "concrete impact",
+      "proof_of_concept": "how to exploit",
+      "remediation": "how to fix"
     }}
   ]
 }}
-
-if no vulnerabilities found: {{"vulnerabilities": []}}
 """
 
     messages = [{'role': 'user', 'content': prompt}]
@@ -252,60 +199,32 @@ def phase_thorough_scan(file_contents: dict[str, str], effort: str) -> dict:
         for path, content in file_contents.items()
     )
 
-    prompt = f"""you are a senior solana security auditor. perform a THOROUGH analysis of these files for HIGH severity vulnerabilities.
+    prompt = f"""you are a senior solana security researcher conducting an audit. your goal is to find real, exploitable vulnerabilities.
 
 {files_text}
 
-IMPORTANT: take your time and examine every function carefully. look for subtle bugs that could be exploited.
+APPROACH:
+1. understand the program's purpose and architecture
+2. identify trust boundaries and privileged operations
+3. trace data flow and state transitions
+4. find bugs that break security assumptions
 
-vulnerability classes to check thoroughly:
-1. ACCESS CONTROL
-   - missing signer checks on privileged operations
-   - incorrect owner validation
-   - pda authority confusion
+report only HIGH severity issues - those where an attacker could steal funds, drain accounts, or cause permanent financial damage. quality over quantity. if the code is secure, report nothing.
 
-2. ACCOUNT VALIDATION
-   - type cosplay (accounts misidentified due to missing discriminators)
-   - pda seed collisions
-   - account substitution attacks
-
-3. STATE CORRUPTION
-   - reinitialization of existing accounts
-   - improper account closing (data left accessible)
-   - missing rent-exemption checks
-
-4. ARITHMETIC
-   - integer overflow/underflow in token amounts
-   - precision loss in fee/reward calculations
-   - division by zero
-
-5. CPI SECURITY
-   - unauthorized cross-program invocations
-   - missing privilege checks on cpi calls
-   - arbitrary program invocation
-
-for each vulnerability:
-- trace the exact code path
-- explain how an attacker exploits it
-- quantify the potential loss
-
-respond with ONLY valid json (no markdown fences, no extra text):
+json format:
 {{
   "vulnerabilities": [
     {{
       "title": "descriptive title",
       "severity": "high",
-      "summary": "concise technical summary",
-      "description": [{{"file": "path.rs", "line_start": N, "line_end": M, "desc": "detailed analysis"}}],
-      "impact": "specific impact on funds",
-      "proof_of_concept": "step by step exploit",
-      "remediation": "concrete fix"
+      "summary": "the bug in one sentence",
+      "description": [{{"file": "path.rs", "line_start": N, "line_end": M, "desc": "technical explanation"}}],
+      "impact": "what an attacker gains",
+      "proof_of_concept": "attack steps",
+      "remediation": "fix"
     }}
   ]
 }}
-
-if no HIGH severity issues found: {{"vulnerabilities": []}}
-remember: only report issues that lead to LOSS OF FUNDS. be thorough but avoid false positives.
 """
 
     config = EFFORT_CONFIG.get(effort, EFFORT_CONFIG['medium'])
@@ -314,88 +233,26 @@ remember: only report issues that lead to LOSS OF FUNDS. be thorough but avoid f
     return _parse_vuln_response(response)
 
 
-def phase_focused_scan(file_contents: dict[str, str], focus_area: str, vuln_classes: list[str]) -> dict:
-    """Focused scan on specific vulnerability class (high effort)."""
+def phase_focused_scan(file_contents: dict[str, str], focus_area: str) -> dict:
+    """Focused exploration of a specific aspect (high effort)."""
     files_text = '\n\n'.join(
         f'=== {path} ===\n```rust\n{content}\n```'
         for path, content in file_contents.items()
     )
 
-    prompt = f"""you are a specialist in {focus_area} vulnerabilities in solana programs.
+    focus_prompts = {
+        'permissions': 'examine all permission checks and authorization logic. who can call what? are there paths where untrusted callers gain elevated access?',
+        'state': 'examine state transitions and account lifecycle. can accounts be corrupted, reused inappropriately, or left in invalid states?',
+        'value_flow': 'trace all token transfers and value movements. can funds be redirected, duplicated, or stolen?',
+    }
+
+    focus_guidance = focus_prompts.get(focus_area, 'look for any security issues you may have missed.')
+
+    prompt = f"""continuing audit. {focus_guidance}
 
 {files_text}
 
-YOUR SOLE FOCUS: {focus_area.upper()} vulnerabilities
-
-specifically look for:
-{chr(10).join(f'- {vc}' for vc in vuln_classes)}
-
-examine EVERY function that could have these issues. trace data flow. check all code paths.
-
-respond with ONLY valid json:
-{{
-  "vulnerabilities": [
-    {{
-      "title": "title",
-      "severity": "high",
-      "summary": "summary",
-      "description": [{{"file": "path.rs", "line_start": N, "line_end": M, "desc": "analysis"}}],
-      "impact": "funds impact",
-      "proof_of_concept": "exploit",
-      "remediation": "fix"
-    }}
-  ]
-}}
-
-if no {focus_area} vulnerabilities: {{"vulnerabilities": []}}
-only HIGH severity (loss of funds).
-"""
-
-    messages = [{'role': 'user', 'content': prompt}]
-    response = call_llm(messages, CODEX_MODEL, max_tokens=8192)
-    return _parse_vuln_response(response)
-
-
-def phase_deep_dive(file_contents: dict[str, str], existing_vulns: list[dict], effort: str) -> dict:
-    """Deep dive on suspicious areas identified earlier."""
-    files_text = '\n\n'.join(
-        f'=== {path} ===\n```rust\n{content}\n```'
-        for path, content in file_contents.items()
-    )
-
-    if existing_vulns:
-        vuln_summary = '\n'.join(f'- {v.get("title", "unknown")}: {v.get("summary", "")}' for v in existing_vulns[:5])
-        context = f"""
-previously identified potential issues:
-{vuln_summary}
-
-now look DEEPER. are there related vulnerabilities? did we miss anything in the same functions?
-"""
-    else:
-        context = """
-initial scan found no obvious issues. now dig deeper:
-- look at edge cases
-- trace complex data flows
-- check for subtle logic errors
-- examine function interactions
-"""
-
-    prompt = f"""you are performing a DEEP DIVE security analysis.
-
-{files_text}
-
-{context}
-
-specifically:
-1. re-examine all instruction handlers
-2. check every account constraint
-3. trace token/sol transfers end-to-end
-4. look for logic bugs that aren't obvious at first glance
-5. check for race conditions or reentrancy
-
-find what others might miss. be thorough.
-
-respond with ONLY valid json:
+report any HIGH severity vulnerabilities you find. json format:
 {{
   "vulnerabilities": [
     {{
@@ -409,8 +266,46 @@ respond with ONLY valid json:
     }}
   ]
 }}
+"""
 
-if no additional issues: {{"vulnerabilities": []}}
+    messages = [{'role': 'user', 'content': prompt}]
+    response = call_llm(messages, CODEX_MODEL, max_tokens=8192)
+    return _parse_vuln_response(response)
+
+
+def phase_deep_dive(file_contents: dict[str, str], existing_vulns: list[dict], effort: str) -> dict:
+    """Final pass to catch anything missed."""
+    files_text = '\n\n'.join(
+        f'=== {path} ===\n```rust\n{content}\n```'
+        for path, content in file_contents.items()
+    )
+
+    if existing_vulns:
+        vuln_summary = '\n'.join(f'- {v.get("title", "unknown")}' for v in existing_vulns[:5])
+        context = f"already found:\n{vuln_summary}\n\nlook for anything we missed."
+    else:
+        context = "no issues found yet. look harder - examine edge cases, complex interactions, subtle logic errors."
+
+    prompt = f"""final audit pass.
+
+{files_text}
+
+{context}
+
+report any additional HIGH severity vulnerabilities. json format:
+{{
+  "vulnerabilities": [
+    {{
+      "title": "title",
+      "severity": "high",
+      "summary": "summary",
+      "description": [{{"file": "path.rs", "line_start": N, "line_end": M, "desc": "analysis"}}],
+      "impact": "impact",
+      "proof_of_concept": "exploit",
+      "remediation": "fix"
+    }}
+  ]
+}}
 """
 
     config = EFFORT_CONFIG.get(effort, EFFORT_CONFIG['medium'])
@@ -431,20 +326,14 @@ def phase_verify(file_contents: dict[str, str], all_vulns: list[dict]) -> dict:
 
     vulns_text = json.dumps(all_vulns, indent=2)
 
-    prompt = f"""you are performing FINAL VERIFICATION of security findings.
+    prompt = f"""verify these findings against the code. remove false positives, deduplicate, and improve descriptions.
 
 {files_text}
 
-candidate vulnerabilities found:
+candidates:
 {vulns_text}
 
-your task:
-1. VERIFY each finding - is it actually exploitable? check the code again.
-2. REMOVE false positives - if protected elsewhere or not actually vulnerable
-3. DEDUPLICATE - merge findings that describe the same issue
-4. REFINE - improve descriptions, add missing details
-
-return the VERIFIED list:
+return only confirmed HIGH severity issues:
 {{
   "vulnerabilities": [
     {{
@@ -458,8 +347,6 @@ return the VERIFIED list:
     }}
   ]
 }}
-
-remove any finding that isn't definitively a HIGH severity loss-of-funds issue.
 """
 
     messages = [{'role': 'user', 'content': prompt}]
@@ -567,22 +454,22 @@ def main():
             all_results.append(result)
             all_vulns.extend(result.get('vulnerabilities', []))
 
-        # High effort: focused scans on each vulnerability class
-        if 'access_control' in phases:
-            print('phase 3a: access control focused scan...')
-            result = phase_focused_scan(file_contents, 'access_control', VULNERABILITY_CLASSES['access_control'])
+        # High effort: focused exploration passes
+        if 'permissions' in phases:
+            print('phase 3a: permissions exploration...')
+            result = phase_focused_scan(file_contents, 'permissions')
             all_results.append(result)
             all_vulns.extend(result.get('vulnerabilities', []))
 
-        if 'state_handling' in phases:
-            print('phase 3b: state handling focused scan...')
-            result = phase_focused_scan(file_contents, 'state_handling', VULNERABILITY_CLASSES['state_handling'])
+        if 'state' in phases:
+            print('phase 3b: state exploration...')
+            result = phase_focused_scan(file_contents, 'state')
             all_results.append(result)
             all_vulns.extend(result.get('vulnerabilities', []))
 
-        if 'arithmetic' in phases:
-            print('phase 3c: arithmetic focused scan...')
-            result = phase_focused_scan(file_contents, 'arithmetic', VULNERABILITY_CLASSES['arithmetic'])
+        if 'value_flow' in phases:
+            print('phase 3c: value flow exploration...')
+            result = phase_focused_scan(file_contents, 'value_flow')
             all_results.append(result)
             all_vulns.extend(result.get('vulnerabilities', []))
 

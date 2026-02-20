@@ -16,7 +16,7 @@ from api.util.fs import ROOT_DIR
 
 # Directory for storing public audit source files
 PUBLIC_SOURCES_DIR = ROOT_DIR / 'public_sources'
-from api.core.const import ALLOWED_MODELS, ALLOWED_PROVIDERS, OPENROUTER_ALLOWED_MODELS
+from api.core.const import ALLOWED_MODELS, ALLOWED_PROVIDERS, OPENROUTER_ALLOWED_MODELS, X402_ALLOWED_MODELS
 from api.core.deps import OptionalTokenDep, TokenDep, get_db
 from api.core.impl import auth_backend
 from api.core.rabbitmq import RabbitMQPublisher, get_rabbitmq_publisher
@@ -115,6 +115,9 @@ def _require_allowed_model(model: str, provider: str) -> None:
     if provider == 'openrouter':
         if model not in OPENROUTER_ALLOWED_MODELS:
             raise HTTPException(status_code=401, detail='Model is not allowed for OpenRouter')
+    elif provider == 'x402':
+        if model not in X402_ALLOWED_MODELS:
+            raise HTTPException(status_code=401, detail='Model is not allowed for x402')
     elif model not in ALLOWED_MODELS:
         raise HTTPException(status_code=401, detail='Model is not allowed')
 

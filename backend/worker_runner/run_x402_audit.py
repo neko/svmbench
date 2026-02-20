@@ -102,28 +102,48 @@ def read_file_safe(path: Path) -> str | None:
         return f'[ERROR READING FILE: {e}]'
 
 
-def call_llm(messages: list[dict], model: str, max_tokens: int = 8192) -> str:
-    """Make LLM API call."""
-    with httpx.Client(timeout=180.0) as client:
-        response = client.post(
-            f'{OPENAI_BASE_URL}/chat/completions',
-            headers={
-                'Authorization': f'Bearer {OPENAI_API_KEY}',
-                'Content-Type': 'application/json',
-            },
-            json={
-                'model': model,
-                'messages': messages,
-                'max_tokens': max_tokens,
-            },
-        )
+def call_llm(messages: list[dict], model: str, max_tokens: int = 8192, max_retries: int = 3) -> str:
+    """Make LLM API call with retry logic."""
+    last_error = None
 
-        if response.status_code == 402:
-            raise Exception('Payment required - x402 proxy should handle this')
+    for attempt in range(max_retries):
+        try:
+            with httpx.Client(timeout=300.0) as client:  # 5 min timeout per request
+                response = client.post(
+                    f'{OPENAI_BASE_URL}/chat/completions',
+                    headers={
+                        'Authorization': f'Bearer {OPENAI_API_KEY}',
+                        'Content-Type': 'application/json',
+                    },
+                    json={
+                        'model': model,
+                        'messages': messages,
+                        'max_tokens': max_tokens,
+                    },
+                )
 
-        response.raise_for_status()
-        data = response.json()
-        return data['choices'][0]['message']['content']
+                # Retry on transient errors
+                if response.status_code in (402, 408, 429, 500, 502, 503, 504):
+                    wait_time = min(10 * (2 ** attempt), 60)  # 10s, 20s, 40s max 60s
+                    print(f'LLM call got {response.status_code}, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})')
+                    import time
+                    time.sleep(wait_time)
+                    last_error = Exception(f'HTTP {response.status_code}: {response.text[:200]}')
+                    continue
+
+                response.raise_for_status()
+                data = response.json()
+                return data['choices'][0]['message']['content']
+
+        except httpx.TimeoutException as e:
+            wait_time = min(10 * (2 ** attempt), 60)
+            print(f'LLM call timed out, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})')
+            import time
+            time.sleep(wait_time)
+            last_error = e
+            continue
+
+    raise last_error or Exception('LLM call failed after retries')
 
 
 def phase_file_select(file_tree: str, rust_files: list[str], effort: str) -> list[str]:

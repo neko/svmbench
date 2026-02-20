@@ -49,9 +49,9 @@ DETECT_MD_PATHS: dict[str, Path] = {
 DETECT_MD_DEFAULT = RUNNER_DIR / 'detect.md'
 
 EFFORT_TIMEOUTS: dict[str, int] = {
-    'low': 120,      # 2 minutes
-    'medium': 360,   # 6 minutes
-    'high': 720,     # 12 minutes
+    'low': 180,       # 3 minutes
+    'medium': 480,    # 8 minutes
+    'high': 1200,     # 20 minutes (7 phases, each up to ~2-3 min)
 }
 
 

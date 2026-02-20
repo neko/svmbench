@@ -1,6 +1,5 @@
 "use client"
 
-import { WalletAdapterNetwork } from "@solana/wallet-adapter-base"
 import {
   ConnectionProvider,
   WalletProvider,
@@ -10,18 +9,19 @@ import {
   PhantomWalletAdapter,
   SolflareWalletAdapter,
 } from "@solana/wallet-adapter-wallets"
-import { clusterApiUrl } from "@solana/web3.js"
 import { useMemo, type ReactNode } from "react"
 
 import "@solana/wallet-adapter-react-ui/styles.css"
+
+// Helius RPC endpoint for mainnet
+const HELIUS_RPC = "https://mainnet.helius-rpc.com/?api-key=dfa2ad47-9043-4b60-b60d-3bc1198f7489"
 
 interface SolanaWalletProviderProps {
   children: ReactNode
 }
 
 export function SolanaWalletProvider({ children }: SolanaWalletProviderProps) {
-  const network = WalletAdapterNetwork.Mainnet
-  const endpoint = useMemo(() => clusterApiUrl(network), [network])
+  const endpoint = HELIUS_RPC
 
   // Explicit wallet adapters for proper connection flow
   const wallets = useMemo(

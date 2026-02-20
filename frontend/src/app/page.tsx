@@ -34,30 +34,52 @@ import { inferPackageName } from "@/lib/upload-utils"
 import { createZipFromFiles } from "@/lib/zip"
 import { useUploadStore } from "@/store/upload-store"
 
+// x402 models - pay with USDC
+const X402_MODELS = [
+  { value: "llm-claude-opus", label: "Claude Opus 4.6" },
+  { value: "llm-claude-sonnet", label: "Claude Sonnet 4.5" },
+  { value: "llm-gpt-5.2-codex", label: "GPT-5.2 Codex" },
+  { value: "llm-gpt-5.2", label: "GPT-5.2" },
+  { value: "llm-deepseek", label: "DeepSeek V3" },
+  { value: "llm-deepseek-r1", label: "DeepSeek R1" },
+  { value: "llm-gemini-pro", label: "Gemini 2.5 Pro" },
+  { value: "llm-grok", label: "Grok 4" },
+  { value: "llm-kimi", label: "Kimi K2.5" },
+  { value: "llm-claude-haiku", label: "Claude Haiku 4.5" },
+  { value: "llm-gemini-flash", label: "Gemini 2.5 Flash" },
+  { value: "llm-minimax", label: "MiniMax M2.5" },
+  { value: "llm-glm", label: "GLM-5" },
+  { value: "llm-llama", label: "Llama 3.3 70B" },
+  { value: "llm-qwen", label: "Qwen3 235B" },
+  { value: "llm-mistral", label: "Mistral Large 3" },
+]
+
 const OPENAI_MODELS = [
   { value: "codex-gpt-5.2", label: "codex-gpt-5.2" },
   { value: "codex-gpt-5.1-codex-max", label: "codex-gpt-5.1-codex-max" },
 ]
 
 const OPENROUTER_MODELS = [
+  { value: "anthropic/claude-opus-4.6", label: "anthropic/claude-opus-4.6" },
+  { value: "anthropic/claude-opus-4.5", label: "anthropic/claude-opus-4.5" },
+  { value: "openai/gpt-5.2-codex", label: "openai/gpt-5.2-codex" },
+  { value: "openai/gpt-5.1-codex-max", label: "openai/gpt-5.1-codex-max" },
+  { value: "deepseek/deepseek-v3.2", label: "deepseek/deepseek-v3.2" },
+  { value: "google/gemini-3-flash-preview", label: "google/gemini-3-flash-preview" },
+  { value: "x-ai/grok-4.1-fast", label: "x-ai/grok-4.1-fast" },
   { value: "minimax/minimax-m2.5", label: "minimax/minimax-m2.5" },
   { value: "moonshotai/kimi-k2.5", label: "moonshotai/kimi-k2.5" },
   { value: "z-ai/glm-5", label: "z-ai/glm-5" },
-  { value: "google/gemini-3-flash-preview", label: "google/gemini-3-flash-preview" },
-  { value: "deepseek/deepseek-v3.2", label: "deepseek/deepseek-v3.2" },
-  { value: "anthropic/claude-opus-4.6", label: "anthropic/claude-opus-4.6" },
-  { value: "anthropic/claude-opus-4.5", label: "anthropic/claude-opus-4.5" },
-  { value: "x-ai/grok-4.1-fast", label: "x-ai/grok-4.1-fast" },
-  { value: "openai/gpt-5.2-codex", label: "openai/gpt-5.2-codex" },
-  { value: "openai/gpt-5.1-codex-max", label: "openai/gpt-5.1-codex-max" },
 ]
+
+type Provider = "x402" | "openai" | "openrouter"
 
 export default function Page() {
   const router = useRouter()
   const { inputMode, files, packageName, sourceUrl, setInputMode, setUpload, setSourceUrl, clearUpload } = useUploadStore()
   const [apiKey, setApiKey] = useSessionStorage("svmbench.apiKey", "")
-  const [provider, setProvider] = useState<"openai" | "openrouter">("openai")
-  const [selectedModels, setSelectedModels] = useState<string[]>(["codex-gpt-5.2"])
+  const [provider, setProvider] = useState<Provider>("x402")
+  const [selectedModels, setSelectedModels] = useState<string[]>(["llm-claude-opus"])
   const [effort, setEffort] = useState<"low" | "medium" | "high">("medium")
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -80,13 +102,20 @@ export default function Page() {
     return null
   }, [files, packageName])
 
-  const models = provider === "openrouter" ? OPENROUTER_MODELS : OPENAI_MODELS
+  const models = provider === "x402"
+    ? X402_MODELS
+    : provider === "openrouter"
+    ? OPENROUTER_MODELS
+    : OPENAI_MODELS
 
   const hasValidInput = inputMode === "url"
     ? !!sourceUrl && sourceUrl.trim().length > 0
     : !!files && fileCount > 0
 
-  const hasValidAuth = keyPredefined || apiKey.trim().length > 0 || !!paymentToken
+  // For x402, payment token is required; for others, API key is required
+  const hasValidAuth = provider === "x402"
+    ? !!paymentToken
+    : keyPredefined || apiKey.trim().length > 0
 
   const canSubmit =
     hasValidInput && !isSubmitting && !isAuthLoading && isAuthorized && selectedModels.length > 0 && hasValidAuth
@@ -99,16 +128,22 @@ export default function Page() {
   )
 
   const handleProviderChange = useCallback(
-    (value: "openai" | "openrouter") => {
+    (value: Provider) => {
       setProvider(value)
       // Reset models to first available for new provider
-      if (value === "openrouter") {
+      if (value === "x402") {
+        setSelectedModels([X402_MODELS[0].value])
+      } else if (value === "openrouter") {
         setSelectedModels([OPENROUTER_MODELS[0].value])
       } else {
         setSelectedModels([OPENAI_MODELS[0].value])
       }
+      // Clear payment token when switching away from x402
+      if (value !== "x402") {
+        clearPaymentToken()
+      }
     },
-    [],
+    [clearPaymentToken],
   )
 
   const handleModelToggle = useCallback(
@@ -123,7 +158,7 @@ export default function Page() {
     [],
   )
 
-  const handleSubmit = async () => {
+  const handleSubmit = useCallback(async () => {
     if (!isAuthorized) {
       setSubmitError("Authorize with GitHub to start analysis.")
       return
@@ -132,7 +167,6 @@ export default function Page() {
       setSubmitError("Select at least one model.")
       return
     }
-    const trimmedKey = apiKey.trim()
 
     setIsSubmitting(true)
     setSubmitError(null)
@@ -141,24 +175,24 @@ export default function Page() {
       let response
       let name: string
 
+      // For x402, we pass the payment token; for others, the API key
+      const authKey = provider === "x402" ? "" : apiKey.trim()
+      const token = provider === "x402" ? paymentToken ?? undefined : undefined
+
       if (inputMode === "url" && sourceUrl) {
-        // URL mode
         name = extractNameFromUrl(sourceUrl)
-        response = await startJobFromUrl(sourceUrl, selectedModels, trimmedKey, provider, effort, paymentToken ?? undefined)
+        response = await startJobFromUrl(sourceUrl, selectedModels, authKey, provider, effort, token)
       } else if (files && fileCount > 0) {
-        // Files mode
         name = selectedLabel ?? "files"
         const zipFile = await createZipFromFiles(files, name)
-        response = await startJob(zipFile, selectedModels, trimmedKey, provider, effort, paymentToken ?? undefined)
+        response = await startJob(zipFile, selectedModels, authKey, provider, effort, token)
       } else {
         setSubmitError("Please provide files or a URL")
         return
       }
 
-      // Clear payment token after successful submission
       clearPaymentToken()
 
-      // Add all jobs to recent list
       for (const job of response.jobs) {
         addRecentJob({
           job_id: job.job_id,
@@ -177,20 +211,32 @@ export default function Page() {
     } finally {
       setIsSubmitting(false)
     }
-  }
+  }, [
+    isAuthorized,
+    selectedModels,
+    provider,
+    apiKey,
+    paymentToken,
+    inputMode,
+    sourceUrl,
+    files,
+    fileCount,
+    selectedLabel,
+    effort,
+    clearPaymentToken,
+    setRecentJobs,
+    router,
+  ])
 
-  // Extract a readable name from URL
   const extractNameFromUrl = (url: string): string => {
     try {
       const parsed = new URL(url)
-      // GitHub repo URL
       if (parsed.hostname === "github.com") {
         const parts = parsed.pathname.split("/").filter(Boolean)
         if (parts.length >= 2) {
-          return parts[1] // repo name
+          return parts[1]
         }
       }
-      // Generic URL - use last path segment or hostname
       const pathParts = parsed.pathname.split("/").filter(Boolean)
       if (pathParts.length > 0) {
         const lastPart = pathParts[pathParts.length - 1]
@@ -235,8 +281,8 @@ export default function Page() {
                   </p>
                   <p className="leading-tight">
                     this interface focuses on detection and only reports
-                    high-severity findings. upload a program folder, provide an
-                    api key, and start a run.
+                    high-severity findings. upload a program folder, connect your
+                    wallet, and start a run.
                   </p>
                   <div className="flex flex-col items-start gap-0.5">
                     <a
@@ -306,23 +352,13 @@ export default function Page() {
                       <SelectValue placeholder="Select provider" />
                     </SelectTrigger>
                     <SelectContent>
+                      <SelectItem value="x402">x402 (Pay with USDC)</SelectItem>
                       <SelectItem value="openai">OpenAI</SelectItem>
                       <SelectItem value="openrouter">OpenRouter</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
-                {!isConfigLoading && (
-                  <PaymentOption
-                    provider={provider}
-                    effort={effort}
-                    models={selectedModels}
-                    apiKey={apiKey}
-                    onApiKeyChange={setApiKey}
-                    onPaymentComplete={setPaymentToken}
-                    disabled={isSubmitting}
-                    keyPredefined={keyPredefined}
-                  />
-                )}
+
                 <div className="grid gap-1">
                   <Label className="text-xs text-foreground">
                     Models
@@ -375,6 +411,7 @@ export default function Page() {
                     </PopoverContent>
                   </Popover>
                 </div>
+
                 <div className="grid gap-1">
                   <Label
                     htmlFor="effort-select"
@@ -393,6 +430,22 @@ export default function Page() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                {!isConfigLoading && (
+                  <PaymentOption
+                    provider={provider}
+                    effort={effort}
+                    models={selectedModels}
+                    apiKey={apiKey}
+                    onApiKeyChange={setApiKey}
+                    onPaymentComplete={setPaymentToken}
+                    onStartAnalysis={handleSubmit}
+                    disabled={isSubmitting || !hasValidInput || !isAuthorized}
+                    keyPredefined={keyPredefined}
+                    isSubmitting={isSubmitting}
+                  />
+                )}
+
                 {!isAuthLoading && !isAuthorized && (
                   <span className="text-base font-serif text-muted-foreground">
                     <a
@@ -404,13 +457,18 @@ export default function Page() {
                     to start analysis.
                   </span>
                 )}
-                <Button
-                  onClick={handleSubmit}
-                  disabled={!canSubmit}
-                  className="w-full uppercase"
-                >
-                  {isSubmitting ? "Uploading…" : "Start analysis"}
-                </Button>
+
+                {/* Show start button only for non-x402 providers */}
+                {provider !== "x402" && (
+                  <Button
+                    onClick={handleSubmit}
+                    disabled={!canSubmit}
+                    className="w-full uppercase"
+                  >
+                    {isSubmitting ? "Uploading…" : "Start analysis"}
+                  </Button>
+                )}
+
                 {submitError && (
                   <div className="text-xs text-destructive">{submitError}</div>
                 )}

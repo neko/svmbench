@@ -16,4 +16,24 @@ OPENROUTER_ALLOWED_MODELS = {
     'openai/gpt-5.1-codex-max',
 }
 
-ALLOWED_PROVIDERS = {'openai', 'openrouter'}
+# x402 models - pay per request via USDC
+X402_ALLOWED_MODELS = {
+    'llm-gpt-5.2-codex',
+    'llm-gpt-5.2',
+    'llm-claude-opus',
+    'llm-claude-sonnet',
+    'llm-claude-haiku',
+    'llm-deepseek',
+    'llm-deepseek-r1',
+    'llm-gemini-pro',
+    'llm-gemini-flash',
+    'llm-grok',
+    'llm-kimi',
+    'llm-minimax',
+    'llm-glm',
+    'llm-llama',
+    'llm-qwen',
+    'llm-mistral',
+}
+
+ALLOWED_PROVIDERS = {'openai', 'openrouter', 'x402'}

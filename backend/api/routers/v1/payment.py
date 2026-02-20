@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.core.config import settings
-from api.core.const import ALLOWED_MODELS, OPENROUTER_ALLOWED_MODELS
+from api.core.const import ALLOWED_MODELS, OPENROUTER_ALLOWED_MODELS, X402_ALLOWED_MODELS
 from api.core.deps import get_db
 from api.models.payment import Payment
 from api.util.pricing import (
@@ -32,6 +32,7 @@ class PaymentConfigResponse(BaseModel):
     markup: float
     markup_percent: int
     requests_per_audit: int  # fixed 2 requests per model audit
+    x402_models: list[str]  # available x402 models
     model_prices: dict[str, float]  # model -> total price (includes markup)
 
 
@@ -66,8 +67,14 @@ async def get_payment_config() -> PaymentConfigResponse:
     x402 uses flat per-request pricing. Each audit makes 2 API calls per model.
     Price = x402_model_price × 2 × (1 + markup)
     """
-    # Get prices for all models (already includes markup)
-    model_prices = await get_all_model_prices()
+    # Get prices for x402 models only
+    from api.util.pricing import get_x402_pricing, calculate_model_price_sync
+
+    x402_prices = await get_x402_pricing()
+    model_prices = {}
+
+    for model in X402_ALLOWED_MODELS:
+        model_prices[model] = calculate_model_price_sync(model, x402_prices)
 
     return PaymentConfigResponse(
         enabled=settings.PAYMENT_ENABLED,
@@ -75,6 +82,7 @@ async def get_payment_config() -> PaymentConfigResponse:
         markup=settings.PAYMENT_MARKUP,
         markup_percent=int(settings.PAYMENT_MARKUP * 100),
         requests_per_audit=REQUESTS_PER_AUDIT,
+        x402_models=sorted(X402_ALLOWED_MODELS),
         model_prices=model_prices,
     )
 

@@ -155,7 +155,34 @@ def _get_x402_endpoint_for_model(model: str) -> str:
     return f"{settings.X402_GATEWAY_URL}/api/llm/{clean_model}"
 
 
-async def _make_x402_payment(amount: float, receiver: str, payment_id: str) -> str:
+def _parse_x402_payment_required(response: httpx.Response) -> dict | None:
+    """Parse x402 PAYMENT-REQUIRED header to extract payment info."""
+    import base64
+
+    payment_header = response.headers.get('payment-required')
+    if not payment_header:
+        return None
+
+    try:
+        decoded = base64.b64decode(payment_header)
+        return json.loads(decoded)
+    except Exception as e:
+        logger.error(f'Failed to parse PAYMENT-REQUIRED header: {e}')
+        return None
+
+
+def _get_solana_payment_option(payment_info: dict) -> dict | None:
+    """Extract Solana payment option from x402 accepts array."""
+    accepts = payment_info.get('accepts', [])
+    for option in accepts:
+        network = option.get('network', '')
+        # Solana mainnet: solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp
+        if network.startswith('solana:'):
+            return option
+    return None
+
+
+async def _make_x402_payment(amount_raw: str, receiver: str, asset: str, fee_payer: str | None = None) -> str:
     """Execute USDC payment for x402 and return transaction signature."""
     keypair = await _get_x402_keypair()
     if not keypair:
@@ -167,17 +194,65 @@ async def _make_x402_payment(amount: float, receiver: str, payment_id: str) -> s
     try:
         from solana.rpc.async_api import AsyncClient
         from solders.pubkey import Pubkey
-        from solders.system_program import TransferParams, transfer
         from solders.transaction import Transaction
+        from spl.token.instructions import TransferParams, transfer
 
-        # For now, use a simplified payment flow
-        # x402 may accept direct payment via their API
-        # This is a placeholder for actual x402 payment implementation
-        logger.info(f'x402 payment: ${amount} to {receiver} (id: {payment_id})')
+        # USDC mint and token program
+        USDC_MINT = Pubkey.from_string('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
+        TOKEN_PROGRAM_ID = Pubkey.from_string('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
 
-        # In production, this would create and send a USDC transfer
-        # For now, return a placeholder - actual implementation depends on x402 API
-        return f"x402_payment_{payment_id}"
+        # Amount is in USDC micro-units (6 decimals)
+        amount_lamports = int(amount_raw)
+        amount_usd = amount_lamports / 1_000_000
+
+        receiver_pubkey = Pubkey.from_string(receiver)
+
+        logger.info(f'x402 payment: ${amount_usd:.4f} USDC to {receiver}')
+
+        # Get ATAs
+        from spl.token.async_client import AsyncToken
+
+        rpc_url = settings.PAYMENT_SOLANA_RPC_URL
+        async with AsyncClient(rpc_url) as client:
+            payer_ata = await AsyncToken.get_associated_token_address(
+                USDC_MINT,
+                keypair.pubkey(),
+            )
+            receiver_ata = await AsyncToken.get_associated_token_address(
+                USDC_MINT,
+                receiver_pubkey,
+            )
+
+            # Create transfer instruction
+            transfer_ix = transfer(
+                TransferParams(
+                    program_id=TOKEN_PROGRAM_ID,
+                    source=payer_ata,
+                    dest=receiver_ata,
+                    owner=keypair.pubkey(),
+                    amount=amount_lamports,
+                )
+            )
+
+            # Build and sign transaction
+            recent_blockhash = await client.get_latest_blockhash()
+            tx = Transaction.new_signed_with_payer(
+                [transfer_ix],
+                keypair.pubkey(),
+                [keypair],
+                recent_blockhash.value.blockhash,
+            )
+
+            # Send transaction
+            result = await client.send_transaction(tx)
+            signature = str(result.value)
+
+            # Wait for confirmation
+            await client.confirm_transaction(signature, 'confirmed')
+
+            logger.info(f'x402 payment sent: {signature}')
+            return signature
+
     except Exception as e:
         logger.error(f'x402 payment failed: {e}')
         raise HTTPException(
@@ -192,6 +267,8 @@ async def _proxy_x402_request(
     body: dict,
 ) -> Response:
     """Proxy a request through x402 with payment."""
+    import base64
+
     endpoint = _get_x402_endpoint_for_model(model)
 
     keypair = await _get_x402_keypair()
@@ -208,43 +285,58 @@ async def _proxy_x402_request(
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, read=None)) as client:
         # Initial request to x402
+        logger.info(f'x402 request to {endpoint} for model {model}')
         response = await client.post(endpoint, json=body, headers=headers)
 
         # Handle 402 Payment Required
         if response.status_code == 402:
-            # Parse payment requirements
-            payment_amount = float(response.headers.get('X-Payment-Amount', '0'))
-            payment_receiver = response.headers.get('X-Payment-Receiver', '')
-            payment_id = response.headers.get('X-Payment-Id', '')
-
-            if not payment_amount or not payment_receiver:
-                # Try to parse from body
-                try:
-                    payment_info = response.json().get('payment', {})
-                    payment_amount = payment_info.get('amount', payment_amount)
-                    payment_receiver = payment_info.get('receiver', payment_receiver)
-                    payment_id = payment_info.get('id', payment_id)
-                except Exception:
-                    pass
-
-            if not payment_amount or not payment_receiver:
+            # Parse PAYMENT-REQUIRED header (x402 protocol v2)
+            payment_info = _parse_x402_payment_required(response)
+            if not payment_info:
                 raise HTTPException(
                     status_code=502,
-                    detail='x402 returned 402 but no payment info',
+                    detail='x402 returned 402 but no PAYMENT-REQUIRED header',
                 )
 
-            logger.info(f'x402 requires payment: ${payment_amount} for {model}')
+            # Get Solana payment option
+            solana_option = _get_solana_payment_option(payment_info)
+            if not solana_option:
+                raise HTTPException(
+                    status_code=502,
+                    detail='x402 does not accept Solana payments',
+                )
 
-            # Make payment
-            signature = await _make_x402_payment(payment_amount, payment_receiver, payment_id)
+            amount_raw = solana_option.get('amount', '0')
+            receiver = solana_option.get('payTo', '')
+            asset = solana_option.get('asset', '')
+            fee_payer = solana_option.get('extra', {}).get('feePayer')
+
+            amount_usd = int(amount_raw) / 1_000_000
+            logger.info(f'x402 requires payment: ${amount_usd:.4f} USDC for {model}')
+
+            # Make USDC payment on Solana
+            signature = await _make_x402_payment(amount_raw, receiver, asset, fee_payer)
+
+            # Build PAYMENT-RESPONSE header (x402 protocol v2)
+            # Format: base64 encoded JSON with network, payload (signature), and payer
+            payment_response = {
+                'x402Version': 2,
+                'network': solana_option.get('network'),
+                'payload': signature,
+                'payer': str(keypair.pubkey()),
+            }
+            payment_response_b64 = base64.b64encode(
+                json.dumps(payment_response).encode()
+            ).decode()
 
             # Retry with payment proof
-            headers['X-Payment-Signature'] = signature
-            headers['X-Payment-Id'] = payment_id
+            headers['Payment-Response'] = payment_response_b64
 
+            logger.info(f'x402 retrying with payment proof: {signature[:20]}...')
             response = await client.post(endpoint, json=body, headers=headers)
 
         if response.status_code != 200:
+            logger.warning(f'x402 response: {response.status_code} - {response.text[:500]}')
             return Response(
                 content=response.content,
                 status_code=response.status_code,

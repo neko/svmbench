@@ -388,18 +388,9 @@ export default function ResultsClient() {
 
   const emptyState = useMemo(() => {
     if (isRunComplete && !files) {
-      // For public audits, show a simple message instead of file uploader
+      // For public audits, don't show anything - just let the vuln panel be visible
       if (isPublicAudit) {
-        return (
-          <div className="w-full space-y-1 text-center">
-            <p className="text-sm text-foreground">
-              Source code not available
-            </p>
-            <p className="text-base text-muted-foreground">
-              This is a public audit. View vulnerabilities in the panel below.
-            </p>
-          </div>
-        )
+        return null
       }
       return null
     }

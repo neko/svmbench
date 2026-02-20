@@ -48,13 +48,17 @@ interface LeaderboardResponse {
   last_updated: string
 }
 
-const SEVERITY_COLORS = {
-  critical: "#ef4444",
-  high: "#f97316",
-  medium: "#eab308",
-  low: "#6b7280",
-  info: "#3b82f6",
-}
+// Grey shades for pie chart segments
+const GREY_SHADES = [
+  "#ffffff",
+  "#e5e5e5",
+  "#cccccc",
+  "#b3b3b3",
+  "#999999",
+  "#808080",
+  "#666666",
+  "#4d4d4d",
+]
 
 function formatDuration(seconds: number | null): string {
   if (seconds === null) return "-"
@@ -65,7 +69,6 @@ function formatDuration(seconds: number | null): string {
 }
 
 function getShortModelName(model: string): string {
-  // Extract just the model name without provider prefix
   const parts = model.split("/")
   return parts[parts.length - 1]
 }
@@ -97,27 +100,14 @@ export default function LeaderboardPage() {
   const vulnsBarData = data?.models.map((m) => ({
     name: getShortModelName(m.model),
     vulnerabilities: m.total_vulnerabilities,
-    avgPerAudit: m.avg_vulnerabilities_per_audit,
   })) ?? []
 
-  const totalSeverity = data?.models.reduce(
-    (acc, m) => ({
-      critical: acc.critical + m.severity_breakdown.critical,
-      high: acc.high + m.severity_breakdown.high,
-      medium: acc.medium + m.severity_breakdown.medium,
-      low: acc.low + m.severity_breakdown.low,
-      info: acc.info + m.severity_breakdown.info,
-    }),
-    { critical: 0, high: 0, medium: 0, low: 0, info: 0 }
-  ) ?? { critical: 0, high: 0, medium: 0, low: 0, info: 0 }
-
-  const severityPieData = [
-    { name: "Critical", value: totalSeverity.critical, color: SEVERITY_COLORS.critical },
-    { name: "High", value: totalSeverity.high, color: SEVERITY_COLORS.high },
-    { name: "Medium", value: totalSeverity.medium, color: SEVERITY_COLORS.medium },
-    { name: "Low", value: totalSeverity.low, color: SEVERITY_COLORS.low },
-    { name: "Info", value: totalSeverity.info, color: SEVERITY_COLORS.info },
-  ].filter((d) => d.value > 0)
+  // Pie chart: audits by model
+  const modelsPieData = data?.models.map((m, idx) => ({
+    name: getShortModelName(m.model),
+    value: m.total_jobs,
+    color: GREY_SHADES[idx % GREY_SHADES.length],
+  })) ?? []
 
   const avgTimeBarData = data?.models
     .filter((m) => m.avg_duration_seconds !== null)
@@ -125,6 +115,17 @@ export default function LeaderboardPage() {
       name: getShortModelName(m.model),
       seconds: Math.round(m.avg_duration_seconds ?? 0),
     })) ?? []
+
+  const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number; name?: string }>; label?: string }) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="rounded border border-border bg-card px-2 py-1 text-xs">
+          <p>{label ?? payload[0].name}: {payload[0].value}</p>
+        </div>
+      )
+    }
+    return null
+  }
 
   return (
     <main className="flex min-h-screen w-screen flex-col">
@@ -181,6 +182,34 @@ export default function LeaderboardPage() {
                 <>
                   {/* Charts Section */}
                   <div className="mb-8 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                    {/* Audits by Model (Pie) */}
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <h3 className="text-sm font-medium text-foreground">audits by model</h3>
+                      </CardHeader>
+                      <CardContent>
+                        <ResponsiveContainer width="100%" height={200}>
+                          <PieChart>
+                            <Pie
+                              data={modelsPieData}
+                              cx="50%"
+                              cy="50%"
+                              innerRadius={40}
+                              outerRadius={70}
+                              dataKey="value"
+                              stroke="hsl(var(--border))"
+                              strokeWidth={1}
+                            >
+                              {modelsPieData.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={entry.color} />
+                              ))}
+                            </Pie>
+                            <Tooltip content={<CustomTooltip />} />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </CardContent>
+                    </Card>
+
                     {/* Vulnerabilities by Model */}
                     <Card>
                       <CardHeader className="pb-2">
@@ -189,58 +218,18 @@ export default function LeaderboardPage() {
                       <CardContent>
                         <ResponsiveContainer width="100%" height={200}>
                           <BarChart data={vulnsBarData} layout="vertical">
-                            <XAxis type="number" tick={{ fontSize: 10 }} />
+                            <XAxis type="number" tick={{ fontSize: 10, fill: "#888" }} axisLine={false} tickLine={false} />
                             <YAxis
                               type="category"
                               dataKey="name"
-                              tick={{ fontSize: 10 }}
+                              tick={{ fontSize: 10, fill: "#888" }}
                               width={80}
+                              axisLine={false}
+                              tickLine={false}
                             />
-                            <Tooltip
-                              contentStyle={{
-                                backgroundColor: "hsl(var(--card))",
-                                border: "1px solid hsl(var(--border))",
-                                borderRadius: "6px",
-                                fontSize: "12px",
-                              }}
-                            />
-                            <Bar dataKey="vulnerabilities" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />
+                            <Tooltip content={<CustomTooltip />} cursor={false} />
+                            <Bar dataKey="vulnerabilities" fill="#888888" radius={[0, 4, 4, 0]} />
                           </BarChart>
-                        </ResponsiveContainer>
-                      </CardContent>
-                    </Card>
-
-                    {/* Severity Distribution */}
-                    <Card>
-                      <CardHeader className="pb-2">
-                        <h3 className="text-sm font-medium text-foreground">severity distribution</h3>
-                      </CardHeader>
-                      <CardContent>
-                        <ResponsiveContainer width="100%" height={200}>
-                          <PieChart>
-                            <Pie
-                              data={severityPieData}
-                              cx="50%"
-                              cy="50%"
-                              innerRadius={40}
-                              outerRadius={70}
-                              dataKey="value"
-                              label={({ name, value }) => `${name}: ${value}`}
-                              labelLine={false}
-                            >
-                              {severityPieData.map((entry, index) => (
-                                <Cell key={`cell-${index}`} fill={entry.color} />
-                              ))}
-                            </Pie>
-                            <Tooltip
-                              contentStyle={{
-                                backgroundColor: "hsl(var(--card))",
-                                border: "1px solid hsl(var(--border))",
-                                borderRadius: "6px",
-                                fontSize: "12px",
-                              }}
-                            />
-                          </PieChart>
                         </ResponsiveContainer>
                       </CardContent>
                     </Card>
@@ -253,22 +242,17 @@ export default function LeaderboardPage() {
                       <CardContent>
                         <ResponsiveContainer width="100%" height={200}>
                           <BarChart data={avgTimeBarData} layout="vertical">
-                            <XAxis type="number" tick={{ fontSize: 10 }} />
+                            <XAxis type="number" tick={{ fontSize: 10, fill: "#888" }} axisLine={false} tickLine={false} />
                             <YAxis
                               type="category"
                               dataKey="name"
-                              tick={{ fontSize: 10 }}
+                              tick={{ fontSize: 10, fill: "#888" }}
                               width={80}
+                              axisLine={false}
+                              tickLine={false}
                             />
-                            <Tooltip
-                              contentStyle={{
-                                backgroundColor: "hsl(var(--card))",
-                                border: "1px solid hsl(var(--border))",
-                                borderRadius: "6px",
-                                fontSize: "12px",
-                              }}
-                            />
-                            <Bar dataKey="seconds" fill="hsl(var(--muted-foreground))" radius={[0, 4, 4, 0]} />
+                            <Tooltip content={<CustomTooltip />} cursor={false} />
+                            <Bar dataKey="seconds" fill="#666666" radius={[0, 4, 4, 0]} />
                           </BarChart>
                         </ResponsiveContainer>
                       </CardContent>

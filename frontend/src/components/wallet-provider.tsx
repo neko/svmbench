@@ -6,6 +6,10 @@ import {
   WalletProvider,
 } from "@solana/wallet-adapter-react"
 import { WalletModalProvider } from "@solana/wallet-adapter-react-ui"
+import {
+  PhantomWalletAdapter,
+  SolflareWalletAdapter,
+} from "@solana/wallet-adapter-wallets"
 import { clusterApiUrl } from "@solana/web3.js"
 import { useMemo, type ReactNode } from "react"
 
@@ -19,12 +23,15 @@ export function SolanaWalletProvider({ children }: SolanaWalletProviderProps) {
   const network = WalletAdapterNetwork.Mainnet
   const endpoint = useMemo(() => clusterApiUrl(network), [network])
 
-  // Use empty array - Phantom and Solflare register as Standard Wallets automatically
-  const wallets = useMemo(() => [], [])
+  // Explicit wallet adapters for proper connection flow
+  const wallets = useMemo(
+    () => [new PhantomWalletAdapter(), new SolflareWalletAdapter()],
+    [],
+  )
 
   return (
     <ConnectionProvider endpoint={endpoint}>
-      <WalletProvider wallets={wallets} autoConnect>
+      <WalletProvider wallets={wallets} autoConnect={false}>
         <WalletModalProvider>{children}</WalletModalProvider>
       </WalletProvider>
     </ConnectionProvider>

@@ -5,7 +5,6 @@ import { HugeiconsIcon } from "@hugeicons/react"
 import JSZip from "jszip"
 import {
   type ChangeEvent,
-  type ClipboardEvent,
   type DragEvent,
   type KeyboardEvent,
   useCallback,
@@ -289,6 +288,7 @@ export function FileUploader({
   }, [onClear])
 
   const dropZoneRef = useRef<HTMLButtonElement>(null)
+  const [isHovering, setIsHovering] = useState(false)
 
   // If URL is set, switch to URL mode automatically
   useEffect(() => {
@@ -297,18 +297,22 @@ export function FileUploader({
     }
   }, [sourceUrl, onInputModeChange])
 
-  // Handle paste event for URLs when hovering over drag area
-  const handlePaste = useCallback(
-    (event: ClipboardEvent<HTMLElement>) => {
-      const text = event.clipboardData.getData("text")
+  // Listen for paste events at document level when hovering over drop zone
+  useEffect(() => {
+    if (!isHovering || hasFiles || inputMode === "url") return
+
+    const handleDocumentPaste = (event: globalThis.ClipboardEvent) => {
+      const text = event.clipboardData?.getData("text")
       if (text && (text.startsWith("http://") || text.startsWith("https://"))) {
         event.preventDefault()
         onSourceUrlChange?.(text)
         onInputModeChange("url")
       }
-    },
-    [onSourceUrlChange, onInputModeChange],
-  )
+    }
+
+    document.addEventListener("paste", handleDocumentPaste)
+    return () => document.removeEventListener("paste", handleDocumentPaste)
+  }, [isHovering, hasFiles, inputMode, onSourceUrlChange, onInputModeChange])
 
   return (
     <div className="w-full space-y-2">
@@ -439,7 +443,8 @@ export function FileUploader({
           onDrop={handleDrop}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
-          onPaste={handlePaste}
+          onMouseEnter={() => setIsHovering(true)}
+          onMouseLeave={() => setIsHovering(false)}
           className={cn(
             "flex h-64 w-full flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border bg-muted/20 px-6 py-8 text-center transition-colors outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30",
             !disabled && "cursor-pointer",

@@ -62,7 +62,8 @@ export async function readFilesFromZip(
     } catch {}
   }
 
-  return { rootFolder: rootFolder ?? file.name.replace(/\.zip$/i, ""), fileData }
+  const fallbackName = file instanceof File ? file.name.replace(/\.zip$/i, "") : "source"
+  return { rootFolder: rootFolder ?? fallbackName, fileData }
 }
 
 async function buildIgnore(

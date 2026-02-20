@@ -281,7 +281,7 @@ export function CodeViewerPanel({
             onAnnotationClick={onAnnotationClick}
           />
         ) : (
-          <div className="flex h-full items-center justify-center p-8">
+          <div className="flex min-h-[50vh] items-center justify-center p-8">
             <p className="text-base text-muted-foreground">
               Select a finding to view code
             </p>

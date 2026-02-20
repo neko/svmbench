@@ -427,6 +427,8 @@ export default function ResultsClient() {
             </p>
           </div>
           <FileUploader
+            inputMode="files"
+            onInputModeChange={() => {}}
             onFilesSelected={handlePromptFiles}
             selectedLabel={packageName ?? "Choose folder"}
             fileCount={null}

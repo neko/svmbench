@@ -25,6 +25,8 @@ export function ResultsGate({
         </div>
         <div className="space-y-3">
           <FileUploader
+            inputMode="files"
+            onInputModeChange={() => {}}
             onFilesSelected={onFilesSelected}
             selectedLabel={packageName ?? "Choose folder"}
             fileCount={null}

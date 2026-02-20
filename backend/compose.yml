@@ -180,25 +180,6 @@ services:
     networks:
       - db
 
-  bridgehelper:
-    profiles: ["bridge"]
-    build:
-      context: ./bridgehelper
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      BRIDGE_HELPER_PORT: 8085
-      SOLANA_SERVICE_WALLET_ADDRESS: ${SOLANA_SERVICE_WALLET_ADDRESS:?set SOLANA_SERVICE_WALLET_ADDRESS}
-      SOLANA_SERVICE_WALLET_KEY: ${SOLANA_SERVICE_WALLET_KEY:?set SOLANA_SERVICE_WALLET_KEY}
-      BASE_SERVICE_WALLET_ADDRESS: ${BASE_SERVICE_WALLET_ADDRESS:?set BASE_SERVICE_WALLET_ADDRESS}
-      BASE_SERVICE_WALLET_KEY: ${BASE_SERVICE_WALLET_KEY:-}
-      SOLANA_RPC_URL: ${SOLANA_RPC_URL:-https://api.mainnet-beta.solana.com}
-      BASE_RPC_URL: ${BASE_RPC_URL:-https://mainnet.base.org}
-    networks:
-      - app
-
 networks:
   app:
   db:

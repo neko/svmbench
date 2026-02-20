@@ -33,40 +33,6 @@ PUBLIC_SOURCES_DIR = ROOT_DIR / 'public_sources'
 router = APIRouter(prefix='/jobs', tags=['jobs'])
 
 
-async def _validate_and_consume_payment_token(
-    session: AsyncSession,
-    payment_token: str | None,
-    effort: str,
-    model: str,
-) -> bool:
-    """Validate payment token and return True if payment is valid."""
-    if not payment_token:
-        return False
-
-    from api.models.payment import Payment
-    from datetime import datetime, timezone
-
-    result = await session.execute(
-        select(Payment).where(
-            Payment.payment_token == payment_token,
-            Payment.used == False,  # noqa: E712
-            Payment.effort == effort,
-        )
-    )
-    payment = result.scalar_one_or_none()
-
-    if not payment:
-        return False
-
-    if payment.models != model:
-        return False
-
-    payment.used = True
-    payment.used_at = datetime.now(timezone.utc)
-    await session.commit()
-    return True
-
-
 JobFormDep = Annotated[StartJobForm, Depends(StartJobForm.as_form)]
 DbSessionDep = Annotated[AsyncSession, Depends(get_db)]
 PublisherDep = Annotated[RabbitMQPublisher, Depends(get_rabbitmq_publisher)]
@@ -107,20 +73,6 @@ async def _require_no_active_job(*, session: AsyncSession, user_id: str) -> None
             status_code=409,
             detail='You already have a queued or running job',
         )
-
-
-ALLOWED_EFFORTS = {'low', 'medium', 'high'}
-
-
-def _require_allowed_effort(effort: str) -> None:
-    if effort not in ALLOWED_EFFORTS:
-        raise HTTPException(status_code=412, detail='Effort must be low, medium, or high')
-
-
-def _require_service_key() -> None:
-    """Ensure X402 service key is configured."""
-    if not settings.X402_SERVICE_KEY:
-        raise HTTPException(status_code=500, detail='X402 service key not configured')
 
 
 async def _fetch_source_from_url(url: str) -> tuple[bytes, str]:
@@ -171,26 +123,17 @@ async def start_job(
     token: TokenDep,
 ) -> StartJobResponse:
     await _require_no_active_job(session=session, user_id=token.user_id)
-    _require_allowed_effort(form.effort)
-    _require_service_key()
 
     if not form.model:
         raise HTTPException(status_code=412, detail='Model is required')
 
-    # Validate payment
-    if not form.payment_token:
-        raise HTTPException(status_code=402, detail='Payment required')
-
-    paid = await _validate_and_consume_payment_token(
-        session, form.payment_token, form.effort, form.model
-    )
-    if not paid:
-        raise HTTPException(status_code=402, detail='Invalid or expired payment token')
+    if not form.api_key:
+        raise HTTPException(status_code=412, detail='OpenRouter API key is required')
 
     batch_id = uuid.uuid4()
 
     try:
-        bundle = build_secret_bundle(upload=form.file, model=form.model, effort=form.effort)
+        bundle = build_secret_bundle(upload=form.file, model=form.model, api_key=form.api_key)
 
         job_id = uuid.uuid4()
         secret_ref = os.urandom(32).hex()
@@ -206,7 +149,6 @@ async def start_job(
             secret_ref=secret_ref,
             result_token=result_token,
             model=form.model,
-            effort=form.effort,
             file_name=(form.file.filename or 'files.zip')[:128],
         )
         session.add(job)
@@ -242,27 +184,18 @@ async def start_job_from_url(
     token: TokenDep,
 ) -> StartJobResponse:
     await _require_no_active_job(session=session, user_id=token.user_id)
-    _require_allowed_effort(request.effort)
-    _require_service_key()
 
     if not request.model:
         raise HTTPException(status_code=412, detail='Model is required')
 
-    # Validate payment
-    if not request.payment_token:
-        raise HTTPException(status_code=402, detail='Payment required')
-
-    paid = await _validate_and_consume_payment_token(
-        session, request.payment_token, request.effort, request.model
-    )
-    if not paid:
-        raise HTTPException(status_code=402, detail='Invalid or expired payment token')
+    if not request.api_key:
+        raise HTTPException(status_code=412, detail='OpenRouter API key is required')
 
     # Fetch source from URL
     zip_data, filename = await _fetch_source_from_url(request.source_url)
 
     if len(zip_data) > settings.BACKEND_MAX_ATTACHMENT_SIZE_BYTES:
-        raise HTTPException(status_code=413, detail=f'Downloaded file too large')
+        raise HTTPException(status_code=413, detail='Downloaded file too large')
 
     try:
         validate_zip_bytes(
@@ -279,7 +212,7 @@ async def start_job_from_url(
     bundle = build_secret_bundle_from_bytes(
         upload_data=zip_data,
         model=request.model,
-        effort=request.effort,
+        api_key=request.api_key,
     )
 
     job_id = uuid.uuid4()
@@ -296,7 +229,6 @@ async def start_job_from_url(
         secret_ref=secret_ref,
         result_token=result_token,
         model=request.model,
-        effort=request.effort,
         file_name=filename[:128],
     )
     session.add(job)

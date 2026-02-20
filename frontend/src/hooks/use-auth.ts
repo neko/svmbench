@@ -6,7 +6,6 @@ const FRONTEND_CONFIG_TTL_MS = 10000
 const DEFAULT_FRONTEND_CONFIG: FrontendConfig = {
   // OSS-friendly default: if the backend config can't be fetched, don't gate usage on auth.
   auth_enabled: false,
-  key_predefined: false,
 }
 let frontendConfigCache: { value: FrontendConfig; timestamp: number } | null =
   null
@@ -80,11 +79,6 @@ export function useAuth() {
       ? frontendConfigCache.value.auth_enabled
       : DEFAULT_FRONTEND_CONFIG.auth_enabled,
   )
-  const [keyPredefined, setKeyPredefined] = useState(
-    frontendConfigCache
-      ? frontendConfigCache.value.key_predefined
-      : DEFAULT_FRONTEND_CONFIG.key_predefined,
-  )
 
   useEffect(() => {
     let isMounted = true
@@ -94,7 +88,6 @@ export function useAuth() {
         const config = await getFrontendConfig()
         if (isMounted) {
           setIsAuthEnabled(config.auth_enabled)
-          setKeyPredefined(config.key_predefined)
           setIsConfigLoading(false)
         }
 
@@ -135,7 +128,6 @@ export function useAuth() {
     isLoading,
     isConfigLoading,
     isAuthEnabled,
-    keyPredefined,
     isAuthorized: !isAuthEnabled || Boolean(user),
   }
 }

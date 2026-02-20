@@ -5,11 +5,9 @@ import tarfile
 import orjson
 from fastapi import UploadFile
 
-from api.core.config import settings
 
-
-def build_secret_bundle(*, upload: UploadFile, model: str, effort: str = 'medium') -> bytes:
-    """Build secret bundle with x402 service key."""
+def build_secret_bundle(*, upload: UploadFile, model: str, api_key: str) -> bytes:
+    """Build secret bundle with user's OpenRouter API key."""
     upload_file = upload.file
 
     upload_file.seek(0, os.SEEK_END)
@@ -17,9 +15,8 @@ def build_secret_bundle(*, upload: UploadFile, model: str, effort: str = 'medium
     upload_file.seek(0)
 
     key_payload = orjson.dumps({
-        'x402_key': settings.X402_SERVICE_KEY.get_secret_value() if settings.X402_SERVICE_KEY else None,
+        'api_key': api_key,
         'model': model,
-        'effort': effort,
     })
 
     buffer = io.BytesIO()
@@ -35,12 +32,11 @@ def build_secret_bundle(*, upload: UploadFile, model: str, effort: str = 'medium
     return buffer.getvalue()
 
 
-def build_secret_bundle_from_bytes(*, upload_data: bytes, model: str, effort: str = 'medium') -> bytes:
+def build_secret_bundle_from_bytes(*, upload_data: bytes, model: str, api_key: str) -> bytes:
     """Build secret bundle from raw bytes."""
     key_payload = orjson.dumps({
-        'x402_key': settings.X402_SERVICE_KEY.get_secret_value() if settings.X402_SERVICE_KEY else None,
+        'api_key': api_key,
         'model': model,
-        'effort': effort,
     })
 
     buffer = io.BytesIO()

@@ -13,8 +13,7 @@ from api.util.zip_validate import validate_upload_zip
 class StartJobFromUrlRequest(BaseModel):
     source_url: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
     model: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-    effort: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] = 'medium'
-    payment_token: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    api_key: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 class StartJobForm(BaseModel):
@@ -22,19 +21,17 @@ class StartJobForm(BaseModel):
 
     file: UploadFile
     model: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-    effort: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] = 'medium'
-    payment_token: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    api_key: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
     @classmethod
     def as_form(
         cls,
         file: Annotated[UploadFile, File()],
         model: Annotated[str, Form()],
-        effort: Annotated[str, Form()] = 'medium',
-        payment_token: Annotated[str, Form()] = '',
+        api_key: Annotated[str, Form()] = '',
     ) -> 'StartJobForm':
         try:
-            return cls(model=model, effort=effort, payment_token=payment_token, file=file)
+            return cls(model=model, api_key=api_key, file=file)
         except ValidationError as exc:
             errors = exc.errors()
             messages = []
@@ -55,13 +52,11 @@ class StartJobForm(BaseModel):
     def check_zip_file(cls, value: UploadFile) -> UploadFile:
         filename = value.filename or ''
         if not filename.lower().endswith('.zip'):
-            msg = 'Only zip files are supported'
-            raise ValueError(msg)
+            raise ValueError('Only zip files are supported')
 
         size = getattr(value, 'size', None)
         if size is None or size > settings.BACKEND_MAX_ATTACHMENT_SIZE_BYTES:
-            msg = f'Max file size is {settings.BACKEND_MAX_ATTACHMENT_SIZE_BYTES}'
-            raise ValueError(msg)
+            raise ValueError(f'Max file size is {settings.BACKEND_MAX_ATTACHMENT_SIZE_BYTES}')
 
         validate_upload_zip(
             value,
@@ -70,26 +65,22 @@ class StartJobForm(BaseModel):
             max_ratio=settings.BACKEND_ZIP_MAX_COMPRESSION_RATIO,
             require_rust=True,
         )
-
         return value
 
 
 class PatchJobForm(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-
     public: bool
 
 
 class StartJobResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-
     batch_id: UUID
     jobs: list['BatchJobItem']
 
 
 class BatchJobItem(BaseModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
-
     job_id: UUID = Field(validation_alias='id')
     model: str
     status: JobStatus
@@ -97,14 +88,12 @@ class BatchJobItem(BaseModel):
 
 class JobStatusResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
-
     job_id: UUID = Field(validation_alias='id')
     batch_id: UUID | None = None
     status: JobStatus
     result: dict | None
     error: str | None = Field(validation_alias='result_error')
     model: str
-    effort: str
     file_name: str
     public: bool
     created_at: datetime
@@ -115,7 +104,6 @@ class JobStatusResponse(BaseModel):
 
 class JobHistoryItem(BaseModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
-
     job_id: UUID = Field(validation_alias='id')
     batch_id: UUID | None = None
     model: str

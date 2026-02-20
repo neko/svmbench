@@ -7,7 +7,6 @@ from fastapi.responses import ORJSONResponse
 
 from api.core.config import settings
 from api.core.rabbitmq import RabbitMQPublisher
-from api.util.solana import start_transaction_listener
 
 from .routers.v1 import router as v1_router
 
@@ -20,15 +19,6 @@ async def lifespan(fastapi_app: FastAPI) -> AsyncIterator[None]:
     )
     await publisher.connect()
     fastapi_app.state.rabbitmq = publisher
-
-    # Start WebSocket listener for incoming payments
-    if settings.PAYMENT_ENABLED and settings.SOLANA_SERVICE_WALLET_ADDRESS:
-        ws_url = settings.SOLANA_RPC_URL.replace('https://', 'wss://')
-        await start_transaction_listener(
-            receiver_wallet=settings.SOLANA_SERVICE_WALLET_ADDRESS,
-            ws_url=ws_url,
-            http_rpc_url=settings.SOLANA_RPC_URL,
-        )
 
     try:
         yield

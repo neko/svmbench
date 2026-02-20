@@ -35,8 +35,8 @@ RUN mkdir -p "$AGENT_DIR/.opencode/bin" && \
     curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path && \
     "$AGENT_DIR/.opencode/bin/opencode" --version
 
-# install opencode x402 plugin
-RUN npm install -g @lucid-agents/opencode-x402-plugin
+# install openrouter ai sdk provider for opencode
+RUN npm install -g @openrouter/ai-sdk-provider
 
 # install ripgrep
 RUN apt-get update && apt-get install -y --no-install-recommends ripgrep && rm -rf /var/lib/apt/lists/*

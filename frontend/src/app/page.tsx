@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { AppFooter } from "@/components/app-footer"
 import { AppHeader } from "@/components/app-header"
 import { FileUploader } from "@/components/file-uploader"
-import { PaymentOption, usePaymentMode } from "@/components/payment-option"
+import { ApiKeyInput } from "@/components/payment-option"
 import { Label } from "@/components/ui/label"
 import {
   Select,
@@ -21,36 +21,30 @@ import { useAuth } from "@/hooks/use-auth"
 import { useLocalStorage } from "@/hooks/use-local-storage"
 import { API_BASE } from "@/lib/api"
 import { startJob, startJobFromUrl } from "@/lib/jobs"
-import { fetchPaymentConfig, type ModelInfo } from "@/lib/payment"
 import { addRecentJob, type RecentJob } from "@/lib/recent-jobs"
 import { inferPackageName } from "@/lib/upload-utils"
 import { createZipFromFiles } from "@/lib/zip"
 import { useUploadStore } from "@/store/upload-store"
 
+// Available OpenRouter models
+const MODELS = [
+  { value: "anthropic/claude-sonnet-4", label: "Claude Sonnet 4" },
+  { value: "anthropic/claude-opus-4", label: "Claude Opus 4" },
+  { value: "openai/gpt-4o", label: "GPT-4o" },
+  { value: "openai/o1", label: "o1" },
+  { value: "google/gemini-2.0-flash-001", label: "Gemini 2.0 Flash" },
+  { value: "deepseek/deepseek-chat", label: "DeepSeek V3" },
+]
+
 export default function Page() {
   const router = useRouter()
   const { inputMode, files, packageName, sourceUrl, setInputMode, setUpload, setSourceUrl, clearUpload } = useUploadStore()
-  const [selectedModel, setSelectedModel] = useState<string>("")
-  const [models, setModels] = useState<ModelInfo[]>([])
-  const [modelsLoading, setModelsLoading] = useState(true)
-
-  useEffect(() => {
-    fetchPaymentConfig()
-      .then((config) => {
-        setModels(config.models)
-        if (config.models.length > 0 && !selectedModel) {
-          setSelectedModel(config.models[0].id)
-        }
-      })
-      .catch((err) => console.error("Failed to fetch models:", err))
-      .finally(() => setModelsLoading(false))
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  const [selectedModel, setSelectedModel] = useState<string>(MODELS[0].value)
 
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [recentJobs, setRecentJobs] = useLocalStorage<RecentJob[]>("svmbench.recentJobs.v1", [])
   const { isAuthorized, isLoading: isAuthLoading, isConfigLoading } = useAuth()
-  const { paymentToken, setPaymentToken, clearPaymentToken } = usePaymentMode()
 
   const fileCount = files?.length ?? 0
   const selectedLabel = useMemo(() => {
@@ -58,8 +52,6 @@ export default function Page() {
     if (files) return inferPackageName(files)
     return null
   }, [files, packageName])
-
-  const modelOptions = useMemo(() => models.map((m) => ({ value: m.id, label: m.name })), [models])
 
   const hasValidInput = inputMode === "url"
     ? !!sourceUrl && sourceUrl.trim().length > 0
@@ -69,7 +61,7 @@ export default function Page() {
     setUpload(selected, inferPackageName(selected))
   }, [setUpload])
 
-  const handleSubmit = useCallback(async (directToken?: string) => {
+  const handleSubmit = useCallback(async (apiKey: string) => {
     if (!isAuthorized) {
       setSubmitError("Authorize with GitHub to start analysis.")
       return
@@ -78,10 +70,8 @@ export default function Page() {
       setSubmitError("Select a model.")
       return
     }
-
-    const token = directToken ?? paymentToken
-    if (!token) {
-      setSubmitError("Payment required.")
+    if (!apiKey) {
+      setSubmitError("OpenRouter API key is required.")
       return
     }
 
@@ -94,17 +84,15 @@ export default function Page() {
 
       if (inputMode === "url" && sourceUrl) {
         name = extractNameFromUrl(sourceUrl)
-        response = await startJobFromUrl(sourceUrl, selectedModel, "high", token)
+        response = await startJobFromUrl(sourceUrl, selectedModel, apiKey)
       } else if (files && fileCount > 0) {
         name = selectedLabel ?? "files"
         const zipFile = await createZipFromFiles(files, name)
-        response = await startJob(zipFile, selectedModel, "high", token)
+        response = await startJob(zipFile, selectedModel, apiKey)
       } else {
         setSubmitError("Please provide files or a URL")
         return
       }
-
-      clearPaymentToken()
 
       const job = response.jobs[0]
       setRecentJobs(addRecentJob({
@@ -118,7 +106,7 @@ export default function Page() {
     } finally {
       setIsSubmitting(false)
     }
-  }, [isAuthorized, selectedModel, paymentToken, inputMode, sourceUrl, files, fileCount, selectedLabel, clearPaymentToken, setRecentJobs, router])
+  }, [isAuthorized, selectedModel, inputMode, sourceUrl, files, fileCount, selectedLabel, setRecentJobs, router])
 
   const extractNameFromUrl = (url: string): string => {
     try {
@@ -161,7 +149,7 @@ export default function Page() {
                   </p>
                   <p className="leading-tight">
                     this interface focuses on detection and only reports high-severity findings. upload a program
-                    folder, connect your wallet, and start a run.
+                    folder, provide your openrouter api key, and start a run.
                   </p>
                   <div className="flex flex-col items-start gap-0.5">
                     <a
@@ -211,10 +199,10 @@ export default function Page() {
                   <Label htmlFor="model-select" className="text-xs text-foreground">Model</Label>
                   <Select value={selectedModel} onValueChange={setSelectedModel}>
                     <SelectTrigger id="model-select" className="w-full">
-                      <SelectValue placeholder={modelsLoading ? "Loading..." : "Select model"} />
+                      <SelectValue placeholder="Select model" />
                     </SelectTrigger>
                     <SelectContent>
-                      {modelOptions.map((m) => (
+                      {MODELS.map((m) => (
                         <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
                       ))}
                     </SelectContent>
@@ -222,10 +210,7 @@ export default function Page() {
                 </div>
 
                 {!isConfigLoading && (
-                  <PaymentOption
-                    effort="high"
-                    model={selectedModel}
-                    onPaymentComplete={setPaymentToken}
+                  <ApiKeyInput
                     onStartAnalysis={handleSubmit}
                     disabled={isSubmitting || !hasValidInput || !isAuthorized}
                     isSubmitting={isSubmitting}

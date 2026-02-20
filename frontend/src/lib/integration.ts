@@ -2,7 +2,6 @@ import { API_BASE } from "@/lib/api"
 
 export interface FrontendConfig {
   auth_enabled: boolean
-  key_predefined: boolean
 }
 
 export async function fetchFrontendConfig(

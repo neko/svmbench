@@ -1,5 +1,5 @@
 """
-Worker init - runs OpenCode audit with Daydreams x402 router.
+Worker init - runs OpenCode audit with OpenRouter API.
 """
 try:
     from uvloop import run
@@ -39,7 +39,6 @@ RUNNER_DIR = Path(os.getenv('SVM_BENCH_RUNNER_DIR') or '/opt/svmbench/worker_run
 OPENCODE_RUNNER_SH = RUNNER_DIR / 'run_opencode.sh'
 AGENTS_MD = RUNNER_DIR / 'AGENTS.md'
 
-# Fixed timeout (always max effort)
 AUDIT_TIMEOUT = 900
 
 
@@ -93,16 +92,15 @@ def _extract_json(text: str) -> dict:
     return _validate_report(payload)
 
 
-def _run_audit(*, x402_key: str, model: str, effort: str) -> Path:
+def _run_audit(*, api_key: str, model: str) -> Path:
     """Run OpenCode audit."""
     env = os.environ.copy()
-    env['X402_PRIVATE_KEY'] = x402_key
+    env['OPENROUTER_API_KEY'] = api_key
     env['OPENCODE_MODEL'] = model
     env['HOME'] = str(AGENT_DIR)
     env['AGENT_DIR'] = str(AGENT_DIR)
     env['SUBMISSION_DIR'] = str(SUBMISSION_DIR)
     env['LOGS_DIR'] = str(LOGS_DIR)
-
     env['AUDIT_TIMEOUT'] = str(AUDIT_TIMEOUT)
 
     # Copy AGENTS.md instructions
@@ -139,8 +137,8 @@ def _run_audit(*, x402_key: str, model: str, effort: str) -> Path:
     return audit_path
 
 
-def _unpack_bundle(bundle: bytes, work_dir: Path) -> tuple[Path, str, str, str]:
-    """Unpack job bundle and return (upload_path, x402_key, model, effort)."""
+def _unpack_bundle(bundle: bytes, work_dir: Path) -> tuple[Path, str, str]:
+    """Unpack job bundle and return (upload_path, api_key, model)."""
     upload_zip_path = work_dir / 'upload.zip'
     key_payload = None
 
@@ -159,19 +157,16 @@ def _unpack_bundle(bundle: bytes, work_dir: Path) -> tuple[Path, str, str, str]:
     if key_payload is None:
         raise RuntimeError('Missing key.json in bundle')
 
-    x402_key = key_payload.get('x402_key') or key_payload.get('openai_token') or ''
-    if not x402_key:
-        raise RuntimeError('Missing x402_key in bundle')
+    api_key = key_payload.get('api_key') or ''
+    if not api_key:
+        raise RuntimeError('Missing api_key in bundle')
 
-    model = key_payload.get('model') or 'anthropic:claude-sonnet-4-6'
-    effort = key_payload.get('effort') or 'medium'
-    if effort not in {'low', 'medium', 'high'}:
-        effort = 'medium'
+    model = key_payload.get('model') or 'anthropic/claude-sonnet-4'
 
     if not upload_zip_path.exists():
         raise RuntimeError('Missing upload.zip in bundle')
 
-    return upload_zip_path, x402_key, model, effort
+    return upload_zip_path, api_key, model
 
 
 async def main() -> None:
@@ -193,7 +188,7 @@ async def main() -> None:
 
     with tempfile.TemporaryDirectory(prefix='svmbench-worker-') as tmpdir:
         work_dir = Path(tmpdir)
-        upload_zip_path, x402_key, model, effort = _unpack_bundle(bundle, work_dir)
+        upload_zip_path, api_key, model = _unpack_bundle(bundle, work_dir)
 
         if AUDIT_DIR.exists():
             shutil.rmtree(AUDIT_DIR)
@@ -202,9 +197,9 @@ async def main() -> None:
         with zipfile.ZipFile(upload_zip_path, 'r') as zf:
             zf.extractall(AUDIT_DIR)
 
-        logger.info(f'Running audit with model={model}, effort={effort}')
+        logger.info(f'Running audit with model={model}')
         try:
-            audit_path = _run_audit(x402_key=x402_key, model=model, effort=effort)
+            audit_path = _run_audit(api_key=api_key, model=model)
             audit_text = audit_path.read_text()
             _extract_json(audit_text)
 

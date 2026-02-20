@@ -1,7 +1,6 @@
 from collections.abc import AsyncIterator, Iterable
 from functools import lru_cache
 from urllib.parse import quote
-import asyncio
 import json
 import time
 import uuid
@@ -15,55 +14,15 @@ from starlette.responses import StreamingResponse
 from api.util.aes_gcm import decrypt_token, derive_key
 from oai_proxy.core.config import settings
 
-# x402 payment support (optional - only loaded if configured)
-_x402_keypair = None
-_x402_lock = asyncio.Lock()
-
 
 PROVIDER_BASE_URLS = {
     'openai': 'https://api.openai.com',
     'openrouter': 'https://openrouter.ai/api',
-    'x402': settings.X402_GATEWAY_URL,
 }
 DEFAULT_PROVIDER = 'openai'
 # Marker token that triggers use of the static key
 STATIC_KEY_MARKER = 'STATIC'
-# Marker token that triggers x402 paid mode
-X402_MARKER = 'X402'
 
-# x402 model endpoint mapping (model ID -> endpoint path)
-X402_MODEL_ENDPOINTS = {
-    # x402 native model IDs (llm-* format)
-    'llm-gpt-5.2-codex': 'llm/gpt-5.2-codex',
-    'llm-gpt-5.2': 'llm/gpt-5.2',
-    'llm-claude-opus': 'llm/claude-opus',
-    'llm-claude-sonnet': 'llm/claude-sonnet',
-    'llm-claude-haiku': 'llm/claude-haiku',
-    'llm-deepseek': 'llm/deepseek-v3',
-    'llm-deepseek-r1': 'llm/deepseek-r1',
-    'llm-gemini-pro': 'llm/gemini-pro',
-    'llm-gemini-flash': 'llm/gemini-flash',
-    'llm-grok': 'llm/grok',
-    'llm-kimi': 'llm/kimi',
-    'llm-minimax': 'llm/minimax',
-    'llm-glm': 'llm/glm',
-    'llm-llama': 'llm/llama',
-    'llm-qwen': 'llm/qwen',
-    'llm-mistral': 'llm/mistral',
-    # Legacy OpenAI/Anthropic-style model IDs
-    'gpt-5.2-codex': 'llm/gpt-5.2-codex',
-    'gpt-5.2-2025-12-11': 'llm/gpt-5.2-codex',
-    'codex-gpt-5.2': 'llm/gpt-5.2-codex',
-    'claude-opus-4-6': 'llm/claude-opus',
-    'anthropic/claude-opus-4-6': 'llm/claude-opus',
-    'anthropic/claude-opus-4-5': 'llm/claude-opus',
-    'claude-sonnet-4-6': 'llm/claude-sonnet',
-    'anthropic/claude-sonnet-4-6': 'llm/claude-sonnet',
-    'anthropic/claude-sonnet-4-5': 'llm/claude-sonnet',
-    'deepseek-chat-v3': 'llm/deepseek-v3',
-    'deepseek/deepseek-chat-v3-0324': 'llm/deepseek-v3',
-    'deepseek/deepseek-chat': 'llm/deepseek-v3',
-}
 HOP_BY_HOP_HEADERS = {
     'connection',
     'host',
@@ -102,7 +61,6 @@ def _resolve_openai_key(token: str) -> str:
     """Resolve the actual OpenAI key from the provided token.
 
     If token is STATIC_KEY_MARKER, use the static key (if configured).
-    If token is X402_MARKER, return marker (handled separately).
     Otherwise, decrypt the encrypted token.
     """
     if token == STATIC_KEY_MARKER:
@@ -113,210 +71,7 @@ def _resolve_openai_key(token: str) -> str:
                 detail='Static key not configured on proxy',
             )
         return static_key
-    if token == X402_MARKER:
-        # x402 mode - no API key needed, we pay per request
-        return X402_MARKER
     return _decrypt_token(token)
-
-
-async def _get_x402_keypair():
-    """Get or initialize x402 service wallet keypair."""
-    global _x402_keypair
-
-    async with _x402_lock:
-        if _x402_keypair is not None:
-            return _x402_keypair
-
-        wallet_key = settings.X402_SERVICE_WALLET_KEY
-        if not wallet_key:
-            return None
-
-        try:
-            from solders.keypair import Keypair
-            _x402_keypair = Keypair.from_base58_string(wallet_key.get_secret_value())
-            logger.info(f'x402 service wallet loaded: {_x402_keypair.pubkey()}')
-            return _x402_keypair
-        except Exception as e:
-            logger.warning(f'Failed to load x402 wallet: {e}')
-            return None
-
-
-def _get_x402_endpoint_for_model(model: str) -> str:
-    """Get x402 API endpoint for a model."""
-    endpoint = X402_MODEL_ENDPOINTS.get(model)
-    if endpoint:
-        return f"{settings.X402_GATEWAY_URL}/api/{endpoint}"
-
-    # Fallback: try to construct from model name
-    # Strip llm- prefix if present to avoid llm/llm-xxx
-    clean_model = model.replace('/', '-').replace('_', '-')
-    if clean_model.startswith('llm-'):
-        clean_model = clean_model[4:]  # Remove 'llm-' prefix
-    return f"{settings.X402_GATEWAY_URL}/api/llm/{clean_model}"
-
-
-def _parse_x402_payment_required(response: httpx.Response) -> dict | None:
-    """Parse x402 PAYMENT-REQUIRED header to extract payment info."""
-    import base64
-
-    payment_header = response.headers.get('payment-required')
-    if not payment_header:
-        return None
-
-    try:
-        decoded = base64.b64decode(payment_header)
-        return json.loads(decoded)
-    except Exception as e:
-        logger.error(f'Failed to parse PAYMENT-REQUIRED header: {e}')
-        return None
-
-
-def _get_solana_payment_option(payment_info: dict) -> dict | None:
-    """Extract Solana payment option from x402 accepts array.
-
-    NOTE: x402 Solana payments require the @x402/svm SDK's partial signing
-    protocol, not raw transaction signatures. Direct USDC transfers don't work.
-    See: https://github.com/coinbase/x402/tree/main/typescript/packages/svm
-
-    For now, Solana payments are NOT SUPPORTED. Use Base/EVM instead.
-    """
-    # Solana x402 requires their SDK's partial signing mechanism
-    # Raw transaction signatures are rejected by the facilitator
-    # TODO: Implement using Node.js helper or port x402/svm SDK
-    return None
-
-    # Original code (doesn't work - x402 expects partial signing):
-    # accepts = payment_info.get('accepts', [])
-    # for option in accepts:
-    #     network = option.get('network', '')
-    #     # Solana mainnet: solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp
-    #     if network.startswith('solana:'):
-    #         return option
-    # return None
-
-
-async def _make_x402_payment(amount_raw: str, receiver: str, asset: str, fee_payer: str | None = None) -> str:
-    """Execute USDC payment for x402 and return transaction signature."""
-    keypair = await _get_x402_keypair()
-    if not keypair:
-        raise HTTPException(
-            status_code=501,
-            detail='x402 service wallet not configured',
-        )
-
-    try:
-        from solana.rpc.async_api import AsyncClient
-        from solders.pubkey import Pubkey
-        from solders.signature import Signature
-        from solders.transaction import Transaction
-        from spl.token.instructions import TransferParams, transfer, get_associated_token_address
-
-        # USDC mint and token program
-        USDC_MINT = Pubkey.from_string('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
-        TOKEN_PROGRAM_ID = Pubkey.from_string('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
-
-        # Amount is in USDC micro-units (6 decimals)
-        amount_lamports = int(amount_raw)
-        amount_usd = amount_lamports / 1_000_000
-
-        receiver_pubkey = Pubkey.from_string(receiver)
-
-        logger.info(f'x402 payment: ${amount_usd:.4f} USDC to {receiver}')
-
-        # Get ATAs (synchronous function)
-        payer_ata = get_associated_token_address(keypair.pubkey(), USDC_MINT)
-        receiver_ata = get_associated_token_address(receiver_pubkey, USDC_MINT)
-
-        rpc_url = settings.PAYMENT_SOLANA_RPC_URL
-        async with AsyncClient(rpc_url) as client:
-            # Create transfer instruction
-            transfer_ix = transfer(
-                TransferParams(
-                    program_id=TOKEN_PROGRAM_ID,
-                    source=payer_ata,
-                    dest=receiver_ata,
-                    owner=keypair.pubkey(),
-                    amount=amount_lamports,
-                )
-            )
-
-            # Build and sign transaction
-            recent_blockhash = await client.get_latest_blockhash()
-            tx = Transaction.new_signed_with_payer(
-                [transfer_ix],
-                keypair.pubkey(),
-                [keypair],
-                recent_blockhash.value.blockhash,
-            )
-
-            # Send transaction
-            result = await client.send_transaction(tx)
-            sig = result.value
-            signature_str = str(sig)
-
-            # Wait for confirmation (needs Signature object, not string)
-            await client.confirm_transaction(sig, 'confirmed')
-
-            logger.info(f'x402 payment sent: {signature_str}')
-            return signature_str
-
-    except Exception as e:
-        logger.error(f'x402 payment failed: {e}')
-        raise HTTPException(
-            status_code=502,
-            detail=f'x402 payment failed: {e}',
-        ) from e
-
-
-async def _proxy_x402_request(
-    request: Request,
-    model: str,
-    body: dict,
-) -> Response:
-    """Proxy a request through x402 using the x402helper Node.js service.
-
-    The x402helper service uses the official @x402/svm SDK to handle the
-    x402 payment protocol with proper partial signing.
-    """
-    helper_url = settings.X402_HELPER_URL
-    if not helper_url:
-        raise HTTPException(
-            status_code=501,
-            detail='x402 helper service not configured (X402_HELPER_URL not set)',
-        )
-
-    # Forward to x402helper's chat completions endpoint
-    target_url = f'{helper_url}/v1/chat/completions'
-
-    logger.info(f'x402 request via helper: {model}')
-
-    async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, read=None)) as client:
-        try:
-            response = await client.post(
-                target_url,
-                json=body,
-                headers={'Content-Type': 'application/json'},
-            )
-
-            logger.info(f'x402 helper response: {response.status_code}')
-
-            return Response(
-                content=response.content,
-                status_code=response.status_code,
-                media_type=response.headers.get('content-type', 'application/json'),
-            )
-        except httpx.ConnectError as e:
-            logger.error(f'x402 helper connection failed: {e}')
-            raise HTTPException(
-                status_code=502,
-                detail='x402 helper service unavailable',
-            ) from e
-        except Exception as e:
-            logger.error(f'x402 helper error: {e}')
-            raise HTTPException(
-                status_code=502,
-                detail=f'x402 helper error: {e}',
-            ) from e
 
 
 def _get_authorization_token(request: Request) -> str:
@@ -375,7 +130,6 @@ def _extract_content_text(content) -> str:
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        # Content is an array of content parts
         parts = []
         for part in content:
             if isinstance(part, str):
@@ -393,28 +147,22 @@ def _responses_to_chat_request(body: dict) -> dict:
     """Convert Responses API request to Chat Completions format."""
     messages = []
 
-    # Handle instructions (system prompt)
     if 'instructions' in body and body['instructions']:
         messages.append({'role': 'system', 'content': body['instructions']})
 
-    # Handle input - can be string or array of message objects
     input_val = body.get('input')
     if isinstance(input_val, str):
         messages.append({'role': 'user', 'content': input_val})
     elif isinstance(input_val, list):
-        # Input can be an array of content items or messages
         for item in input_val:
             if isinstance(item, dict):
                 if item.get('type') == 'message' and 'role' in item:
-                    # It's a Responses API message object
                     role = item['role']
-                    # Map developer role to system (Chat Completions doesn't have developer)
                     if role == 'developer':
                         role = 'system'
                     content = _extract_content_text(item.get('content', ''))
                     messages.append({'role': role, 'content': content})
                 elif 'role' in item:
-                    # Legacy message format
                     role = item['role']
                     if role == 'developer':
                         role = 'system'
@@ -432,7 +180,6 @@ def _responses_to_chat_request(body: dict) -> dict:
         'messages': messages,
     }
 
-    # Copy over common parameters
     if 'temperature' in body:
         chat_body['temperature'] = body['temperature']
     if 'max_output_tokens' in body:
@@ -446,41 +193,25 @@ def _responses_to_chat_request(body: dict) -> dict:
     if 'stop' in body:
         chat_body['stop'] = body['stop']
 
-    # Handle tools - Responses API uses flat structure, Chat Completions uses nested
-    # Responses API: {"type": "function", "name": "...", "description": "...", "parameters": {...}}
-    # Chat Completions: {"type": "function", "function": {"name": "...", "description": "...", "parameters": {...}}}
     if 'tools' in body and body['tools']:
         chat_tools = []
         for tool in body['tools']:
             if 'function' in tool and isinstance(tool['function'], dict):
-                # Already in Chat Completions format
                 chat_tools.append(tool)
             elif tool.get('type') == 'function' and 'name' in tool:
-                # Responses API format - convert to Chat Completions
-                func_def = {
-                    'name': tool['name'],
-                }
+                func_def = {'name': tool['name']}
                 if 'description' in tool:
                     func_def['description'] = tool['description']
                 if 'parameters' in tool:
                     func_def['parameters'] = tool['parameters']
-                chat_tools.append({
-                    'type': 'function',
-                    'function': func_def,
-                })
+                chat_tools.append({'type': 'function', 'function': func_def})
             elif 'name' in tool:
-                # Simple function definition
-                func_def = {
-                    'name': tool['name'],
-                }
+                func_def = {'name': tool['name']}
                 if 'description' in tool:
                     func_def['description'] = tool['description']
                 if 'parameters' in tool:
                     func_def['parameters'] = tool['parameters']
-                chat_tools.append({
-                    'type': 'function',
-                    'function': func_def,
-                })
+                chat_tools.append({'type': 'function', 'function': func_def})
         if chat_tools:
             chat_body['tools'] = chat_tools
 
@@ -499,12 +230,8 @@ def _chat_to_responses_response(chat_resp: dict) -> dict:
         message = choice.get('message', {})
         msg_id = f"msg_{uuid.uuid4().hex[:24]}"
 
-        # Handle text content as a message output item
         if message.get('content'):
-            content_items = [{
-                'type': 'output_text',
-                'text': message['content'],
-            }]
+            content_items = [{'type': 'output_text', 'text': message['content']}]
             output.append({
                 'type': 'message',
                 'id': msg_id,
@@ -513,7 +240,6 @@ def _chat_to_responses_response(chat_resp: dict) -> dict:
                 'content': content_items,
             })
 
-        # Handle tool calls as separate function_call output items
         tool_calls = message.get('tool_calls', [])
         for tc in tool_calls:
             call_id = tc.get('id', f"call_{uuid.uuid4().hex[:24]}")
@@ -526,13 +252,8 @@ def _chat_to_responses_response(chat_resp: dict) -> dict:
                 'status': 'completed',
             })
 
-    # Map finish reason
     finish_reason = choices[0].get('finish_reason', 'stop') if choices else 'stop'
-    status = 'completed'
-    if finish_reason == 'tool_calls':
-        status = 'completed'
-    elif finish_reason == 'length':
-        status = 'incomplete'
+    status = 'completed' if finish_reason != 'length' else 'incomplete'
 
     return {
         'id': response_id,
@@ -549,20 +270,9 @@ async def _chat_stream_to_responses_stream(
     response: httpx.Response,
     client: httpx.AsyncClient,
 ) -> AsyncIterator[bytes]:
-    """Convert streaming Chat Completions to streaming Responses format.
-
-    Emits events in the Responses API streaming format:
-    - response.created: Initial response object
-    - response.output_item.added: When output item is added
-    - response.content_part.added: When content part is added
-    - response.output_text.delta: Text deltas
-    - response.content_part.done: Content part completed
-    - response.output_item.done: Item completed
-    - response.completed: Final completion event
-    """
+    """Convert streaming Chat Completions to streaming Responses format."""
     response_id = f"resp_{uuid.uuid4().hex[:24]}"
     msg_id = f"msg_{uuid.uuid4().hex[:24]}"
-    content_part_id = f"cp_{uuid.uuid4().hex[:24]}"
     created_at = int(time.time())
     model = ''
     accumulated_content = ''
@@ -574,32 +284,22 @@ async def _chat_stream_to_responses_stream(
             if not line or not line.startswith('data: '):
                 continue
 
-            data = line[6:]  # Remove 'data: ' prefix
+            data = line[6:]
             if data == '[DONE]':
-                # Build output items - messages and tool calls are separate items
                 output_items = []
                 output_idx = 0
 
-                # If there's text content, create a message output item
                 if accumulated_content:
-                    content_items = [{
-                        'type': 'output_text',
-                        'text': accumulated_content,
-                    }]
-                    # Emit content_part.done
+                    content_items = [{'type': 'output_text', 'text': accumulated_content}]
                     part_done = {
                         'type': 'response.content_part.done',
                         'item_id': msg_id,
                         'output_index': output_idx,
                         'content_index': 0,
-                        'part': {
-                            'type': 'output_text',
-                            'text': accumulated_content,
-                        },
+                        'part': {'type': 'output_text', 'text': accumulated_content},
                     }
                     yield f"data: {json.dumps(part_done)}\n\n".encode()
 
-                    # Emit output_item.done for message
                     msg_item = {
                         'type': 'message',
                         'id': msg_id,
@@ -616,7 +316,6 @@ async def _chat_stream_to_responses_stream(
                     output_items.append(msg_item)
                     output_idx += 1
 
-                # Add function_call output items for each tool call
                 for tc in accumulated_tool_calls.values():
                     call_id = tc.get('id', f"call_{uuid.uuid4().hex[:24]}")
                     func_call_item = {
@@ -627,7 +326,6 @@ async def _chat_stream_to_responses_stream(
                         'arguments': tc.get('arguments', '{}'),
                         'status': 'completed',
                     }
-                    # Emit output_item.done for function call
                     item_done = {
                         'type': 'response.output_item.done',
                         'output_index': output_idx,
@@ -637,7 +335,6 @@ async def _chat_stream_to_responses_stream(
                     output_items.append(func_call_item)
                     output_idx += 1
 
-                # Emit response.completed
                 completed_event = {
                     'type': 'response.completed',
                     'response': {
@@ -662,10 +359,8 @@ async def _chat_stream_to_responses_stream(
             if not choices:
                 continue
 
-            # On first chunk with content, emit setup events
             if first_chunk:
                 first_chunk = False
-                # Emit response.created
                 created_event = {
                     'type': 'response.created',
                     'response': {
@@ -679,7 +374,6 @@ async def _chat_stream_to_responses_stream(
                 }
                 yield f"data: {json.dumps(created_event)}\n\n".encode()
 
-                # Emit output_item.added
                 item_added = {
                     'type': 'response.output_item.added',
                     'output_index': 0,
@@ -693,25 +387,19 @@ async def _chat_stream_to_responses_stream(
                 }
                 yield f"data: {json.dumps(item_added)}\n\n".encode()
 
-                # Emit content_part.added
                 part_added = {
                     'type': 'response.content_part.added',
                     'item_id': msg_id,
                     'output_index': 0,
                     'content_index': 0,
-                    'part': {
-                        'type': 'output_text',
-                        'text': '',
-                    },
+                    'part': {'type': 'output_text', 'text': ''},
                 }
                 yield f"data: {json.dumps(part_added)}\n\n".encode()
 
             delta = choices[0].get('delta', {})
 
-            # Handle content deltas
             if delta.get('content'):
                 accumulated_content += delta['content']
-                # Emit a streaming delta event
                 delta_event = {
                     'type': 'response.output_text.delta',
                     'item_id': msg_id,
@@ -721,16 +409,11 @@ async def _chat_stream_to_responses_stream(
                 }
                 yield f"data: {json.dumps(delta_event)}\n\n".encode()
 
-            # Handle tool call deltas
             if delta.get('tool_calls'):
                 for tc in delta['tool_calls']:
                     idx = tc.get('index', 0)
                     if idx not in accumulated_tool_calls:
-                        accumulated_tool_calls[idx] = {
-                            'id': tc.get('id', ''),
-                            'name': tc.get('function', {}).get('name', ''),
-                            'arguments': '',
-                        }
+                        accumulated_tool_calls[idx] = {'id': tc.get('id', ''), 'name': tc.get('function', {}).get('name', ''), 'arguments': ''}
                     if tc.get('id'):
                         accumulated_tool_calls[idx]['id'] = tc['id']
                     if tc.get('function', {}).get('name'):
@@ -762,7 +445,6 @@ async def _proxy_responses_to_chat(
 
     target_url = f"{base_url}/v1/chat/completions"
 
-    # Don't use context manager for streaming - we need to keep the connection alive
     client = httpx.AsyncClient(timeout=httpx.Timeout(60.0, read=None))
     try:
         upstream = await client.send(
@@ -777,7 +459,6 @@ async def _proxy_responses_to_chat(
         )
 
         if upstream.status_code != 200:
-            # Pass through error response
             error_body = await upstream.aread()
             await upstream.aclose()
             await client.aclose()
@@ -788,7 +469,6 @@ async def _proxy_responses_to_chat(
             )
 
         if is_streaming:
-            # Client and response cleanup handled by the generator
             return StreamingResponse(
                 _chat_stream_to_responses_stream(upstream, client),
                 status_code=200,
@@ -819,22 +499,6 @@ async def _proxy_request(request: Request, path: str) -> Response:
     openai_key = _resolve_openai_key(token)
     provider, base_url, cleaned_path = _get_provider_from_request(request, path)
 
-    # Handle x402 provider - paid mode
-    if provider == 'x402' or openai_key == X402_MARKER:
-        # Parse request body to get model
-        body_bytes = await request.body()
-        try:
-            body = json.loads(body_bytes)
-        except json.JSONDecodeError:
-            raise HTTPException(status_code=400, detail='Invalid JSON body')
-
-        model = body.get('model', '')
-        if not model:
-            raise HTTPException(status_code=400, detail='Model is required for x402 requests')
-
-        # Route to x402 paid endpoint
-        return await _proxy_x402_request(request, model, body)
-
     forward_headers = _filter_headers(request.headers.items())
     forward_headers['authorization'] = f'Bearer {openai_key}'
 
@@ -843,11 +507,9 @@ async def _proxy_request(request: Request, path: str) -> Response:
         forward_headers['http-referer'] = 'https://svmbench.io'
         forward_headers['x-title'] = 'svmbench'
 
-    # Filter out internal params
     filtered_params = _filter_query_params(dict(request.query_params))
 
     # Check if this is a Responses API request going to OpenRouter
-    # OpenRouter doesn't fully support Responses API, so translate to Chat Completions
     target_path = cleaned_path.lstrip('/')
     if provider == 'openrouter' and target_path.startswith('v1/responses'):
         return await _proxy_responses_to_chat(

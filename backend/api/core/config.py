@@ -55,24 +55,8 @@ class Settings(BaseSettings):
     AUTH_BACKEND: str | None = None
     AUTH_BACKEND_ARGUMENTS: dict[str, str] = Field(default_factory=dict)
 
-    # Payment configuration
-    PAYMENT_ENABLED: bool = True
-    PAYMENT_MARKUP: float = 0.5
-
-    # Solana service wallet (receives user USDC payments)
-    SOLANA_SERVICE_WALLET_ADDRESS: str = ''
-    SOLANA_RPC_URL: str = 'https://api.mainnet-beta.solana.com'
-
-    # Base service wallet (receives bridged USDC, pays Daydreams)
-    BASE_SERVICE_WALLET_ADDRESS: str = ''
-
-    # Bridge helper service URL
-    BRIDGE_HELPER_URL: str = 'http://bridgehelper:8085'
-
-    # Daydreams x402 router configuration
-    # Base (EVM) wallet private key for signing x402 permits
-    # This wallet should have USDC on Base chain
-    X402_SERVICE_KEY: Secret[str] | None = None
+    # OpenRouter API base URL
+    OPENROUTER_BASE_URL: str = 'https://openrouter.ai/api/v1'
 
     @field_validator('RABBITMQ_QUEUE_SUFFIX', mode='before')
     @classmethod

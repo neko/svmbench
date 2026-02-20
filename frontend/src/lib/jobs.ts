@@ -119,21 +119,18 @@ export async function setJobPublic(
 export interface StartJobOptions {
   file: File
   model: string
-  effort?: string
-  paymentToken: string
+  apiKey: string
 }
 
 export async function startJob(
   file: File,
   model: string,
-  effort: string = "medium",
-  paymentToken: string,
+  apiKey: string,
 ): Promise<StartJobResponse> {
   const body = new FormData()
   body.append("file", file)
   body.append("model", model)
-  body.append("effort", effort)
-  body.append("payment_token", paymentToken)
+  body.append("api_key", apiKey)
 
   const response = await fetch(`${API_BASE}/v1/jobs/start`, {
     method: "POST",
@@ -152,14 +149,12 @@ export async function startJob(
 export async function startJobFromUrl(
   sourceUrl: string,
   model: string,
-  effort: string = "medium",
-  paymentToken: string,
+  apiKey: string,
 ): Promise<StartJobResponse> {
   const payload = {
     source_url: sourceUrl,
     model,
-    effort,
-    payment_token: paymentToken,
+    api_key: apiKey,
   }
 
   const response = await fetch(`${API_BASE}/v1/jobs/start-from-url`, {

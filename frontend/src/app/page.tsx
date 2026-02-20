@@ -28,12 +28,11 @@ import { useUploadStore } from "@/store/upload-store"
 
 // Available OpenRouter models
 const MODELS = [
-  { value: "anthropic/claude-sonnet-4", label: "Claude Sonnet 4" },
-  { value: "anthropic/claude-opus-4", label: "Claude Opus 4" },
-  { value: "openai/gpt-4o", label: "GPT-4o" },
-  { value: "openai/o1", label: "o1" },
-  { value: "google/gemini-2.0-flash-001", label: "Gemini 2.0 Flash" },
-  { value: "deepseek/deepseek-chat", label: "DeepSeek V3" },
+  { value: "google/gemini-3.1-pro-preview", label: "Gemini 3.1 Pro" },
+  { value: "anthropic/claude-opus-4.6", label: "Claude Opus 4.6" },
+  { value: "anthropic/claude-opus-4.5", label: "Claude Opus 4.5" },
+  { value: "openai/gpt-5.2-codex", label: "GPT-5.2 Codex" },
+  { value: "z-ai/glm-5", label: "GLM-5" },
 ]
 
 export default function Page() {

@@ -72,7 +72,7 @@ class Settings(BaseSettings):
     # Payment configuration
     PAYMENT_ENABLED: bool = True
     PAYMENT_RECEIVER_WALLET: str = 'svmav8vdsLCKvDRsuiD9X4eZUWNroLFovMV9NQ9iEoL'
-    PAYMENT_SOLANA_RPC_URL: str = 'https://deborah-q5m00f-fast-mainnet.helius-rpc.com'
+    PAYMENT_SOLANA_RPC_URL: str = 'https://mainnet.helius-rpc.com/?api-key=dfa2ad47-9043-4b60-b60d-3bc1198f7489'
     # Markup percentage on top of model costs (e.g., 0.5 = 50% markup)
     PAYMENT_MARKUP: float = 0.5
 

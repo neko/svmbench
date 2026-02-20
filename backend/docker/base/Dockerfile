@@ -5,17 +5,16 @@ ENV WORKSPACE_BASE=/home \
     AGENT_DIR=/home/agent \
     AUDIT_DIR=/home/agent/audit \
     SUBMISSION_DIR=/home/agent/submission \
-    LOGS_DIR=/home/logs \
-    NVM_DIR=/home/agent/.nvm
+    LOGS_DIR=/home/logs
 
-ENV PATH=$AGENT_DIR/.local/bin:$PATH
+ENV PATH=$AGENT_DIR/.opencode/bin:$AGENT_DIR/.local/bin:/root/.local/bin:$PATH
 ENV HOME=$AGENT_DIR
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
 RUN find /usr/lib -name EXTERNALLY-MANAGED -delete
 
-# dependencies for all the stuff we'll be using
+# dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl unzip ca-certificates gnupg \
     zip unzip git nano vim jq bc lsof xxd \
@@ -27,37 +26,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && corepack enable \
     && rm -rf /var/lib/apt/lists/*
 
-# setup the folders
+# setup folders
 RUN mkdir -p "$AUDIT_DIR" "$SUBMISSION_DIR" "$LOGS_DIR"
 
-# install codex
-# Default to the latest known stable release tag; can be overridden at build time:
-#   docker build --build-arg CODEX_VERSION=rust-vX.Y.Z ...
-ARG CODEX_VERSION=rust-v0.104.0
+# install opencode
 ARG TARGETARCH
-RUN set -eux; \
-    arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \
-    case "$arch" in \
-      amd64) CODEX_ARCH="x86_64" ;; \
-      arm64) CODEX_ARCH="aarch64" ;; \
-      *) echo "Unsupported arch: $arch" >&2; exit 1 ;; \
-    esac; \
-    CODEX_URL="https://github.com/openai/codex/releases/download/${CODEX_VERSION}/codex-${CODEX_ARCH}-unknown-linux-gnu.tar.gz"; \
-    mkdir -p /usr/local/src/codex; cd /usr/local/src/codex; \
-    curl -L -o codex.tgz "$CODEX_URL"; \
-    ENTRY="$(tar -tzf codex.tgz | grep -v '/$' | head -n1)"; \
-    test -n "$ENTRY"; \
-    tar -xzf codex.tgz -O "$ENTRY" > /usr/local/bin/codex; \
-    chmod 0755 /usr/local/bin/codex; \
-    cd /; rm -rf /usr/local/src/codex; \
-    codex --version
+RUN mkdir -p "$AGENT_DIR/.opencode/bin" && \
+    curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path && \
+    "$AGENT_DIR/.opencode/bin/opencode" --version
+
+# install opencode x402 plugin
+RUN npm install -g @lucid-agents/opencode-x402-plugin
 
 # install ripgrep
 RUN apt-get update && apt-get install -y --no-install-recommends ripgrep && rm -rf /var/lib/apt/lists/*
 
 WORKDIR "$AGENT_DIR"
 
-# set the git config up
+# git config
 RUN git config --global --add safe.directory $AGENT_DIR && \
     git config --global --add safe.directory $AUDIT_DIR && \
     git config --global user.email "agent@svmbench.local" && \

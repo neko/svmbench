@@ -17,7 +17,7 @@ def build_secret_bundle(*, upload: UploadFile, model: str, effort: str = 'medium
     upload_file.seek(0)
 
     key_payload = orjson.dumps({
-        'x402_key': settings.X402_SERVICE_KEY,
+        'x402_key': settings.X402_SERVICE_KEY.get_secret_value() if settings.X402_SERVICE_KEY else None,
         'model': model,
         'effort': effort,
     })
@@ -38,7 +38,7 @@ def build_secret_bundle(*, upload: UploadFile, model: str, effort: str = 'medium
 def build_secret_bundle_from_bytes(*, upload_data: bytes, model: str, effort: str = 'medium') -> bytes:
     """Build secret bundle from raw bytes."""
     key_payload = orjson.dumps({
-        'x402_key': settings.X402_SERVICE_KEY,
+        'x402_key': settings.X402_SERVICE_KEY.get_secret_value() if settings.X402_SERVICE_KEY else None,
         'model': model,
         'effort': effort,
     })

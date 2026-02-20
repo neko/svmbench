@@ -46,8 +46,6 @@ class DockerBackend(BackendABC):
             'JOB_ID': options.job_id,
             'AGENT_ID': options.model,
         }
-        if settings.INSTANCER_OAI_PROXY_BASE_URL:
-            env['OAI_PROXY_BASE_URL'] = settings.INSTANCER_OAI_PROXY_BASE_URL
 
         container = await docker.containers.create(
             config={

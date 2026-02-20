@@ -78,21 +78,5 @@ class Settings(BaseSettings):
     INSTANCER_RESULTSVC_HOST: str = 'resultsvc'
     INSTANCER_RESULTSVC_PORT: int = 8083
 
-    # Optional: only needed when the backend is configured for proxy-token mode.
-    INSTANCER_OAI_PROXY_BASE_URL: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices('INSTANCER_OAI_PROXY_BASE_URL', 'OAI_PROXY_BASE_URL'),
-    )
-
-    @field_validator('INSTANCER_OAI_PROXY_BASE_URL', mode='before')
-    @classmethod
-    def _normalize_proxy_base_url(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        if not isinstance(value, str):
-            return value
-        stripped = value.strip()
-        return stripped or None
-
 
 settings = Settings()  # type: ignore[missing-argument]

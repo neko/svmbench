@@ -1,3 +1,5 @@
+import asyncio
+
 import httpx
 from loguru import logger
 from solders.pubkey import Pubkey
@@ -73,8 +75,36 @@ async def verify_usdc_transfer(
 
         result = data.get('result')
         if not result:
-            logger.error('Transaction not found (result is None)')
-            return False
+            # Transaction might not be indexed yet, retry a few times
+            for retry in range(5):
+                logger.info(f'Transaction not indexed yet, retry {retry + 1}/5...')
+                await asyncio.sleep(2)
+
+                response = await client.post(
+                    rpc_url,
+                    json={
+                        'jsonrpc': '2.0',
+                        'id': 1,
+                        'method': 'getTransaction',
+                        'params': [
+                            signature,
+                            {
+                                'encoding': 'jsonParsed',
+                                'maxSupportedTransactionVersion': 0,
+                            },
+                        ],
+                    },
+                    timeout=30.0,
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    result = data.get('result')
+                    if result:
+                        break
+
+            if not result:
+                logger.error('Transaction not found after retries')
+                return False
 
         # Check transaction was successful
         meta = result.get('meta', {})

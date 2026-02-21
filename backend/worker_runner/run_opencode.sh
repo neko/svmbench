@@ -17,8 +17,9 @@ rm -f "${SUBMISSION_DIR}/audit.md"
 cd "${AGENT_DIR}"
 
 # Run OpenCode with openrouter provider - uses OPENROUTER_API_KEY directly
+# --title prevents opencode from calling a secondary model to generate session title
 timeout --signal=TERM --kill-after=30s "${AUDIT_TIMEOUT}s" \
-  opencode run -m "openrouter/${OPENCODE_MODEL}" "Follow the instructions in AGENTS.md to audit the code in audit/ and write results to submission/audit.md" \
+  opencode run -m "openrouter/${OPENCODE_MODEL}" --title "audit" "Follow the instructions in AGENTS.md to audit the code in audit/ and write results to submission/audit.md" \
   > "${LOGS_DIR}/opencode.log" 2>&1 || true
 
 if [[ ! -s "${SUBMISSION_DIR}/audit.md" ]]; then

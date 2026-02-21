@@ -28,11 +28,11 @@ import { useUploadStore } from "@/store/upload-store"
 
 // Available OpenRouter models
 const MODELS = [
-  { value: "google/gemini-3.1-pro-preview", label: "Gemini 3.1 Pro" },
+  { value: "google/gemini-3-pro-preview", label: "Gemini 3 Pro" },
   { value: "anthropic/claude-opus-4.6", label: "Claude Opus 4.6" },
   { value: "anthropic/claude-opus-4.5", label: "Claude Opus 4.5" },
-  { value: "openai/gpt-5.2-codex", label: "GPT-5.2 Codex" },
-  { value: "z-ai/glm-5", label: "GLM-5" },
+  { value: "openai/gpt-5.1-codex", label: "GPT-5.1 Codex" },
+  { value: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro" },
 ]
 
 export default function Page() {

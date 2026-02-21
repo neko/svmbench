@@ -35,8 +35,8 @@ RUN mkdir -p "$AGENT_DIR/.opencode/bin" && \
     curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path && \
     "$AGENT_DIR/.opencode/bin/opencode" --version
 
-# install openrouter ai sdk provider for opencode
-RUN npm install -g @openrouter/ai-sdk-provider
+# install openai ai sdk for opencode (OpenRouter uses OpenAI-compatible API)
+RUN npm install -g @ai-sdk/openai
 
 # install ripgrep
 RUN apt-get update && apt-get install -y --no-install-recommends ripgrep && rm -rf /var/lib/apt/lists/*

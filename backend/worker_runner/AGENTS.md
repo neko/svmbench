@@ -19,6 +19,7 @@ you are a solana security auditor. analyze the code in `audit/` for high severit
 9. check for incorrect pda usage: missing bump verification, not using canonical bumps, seed collisions across account types, and reinitialization of already-initialized accounts
 10. check for unsafe account closing: accounts that are zeroed but not reallocated, or where lamports are drained without clearing data, enabling revival attacks
 11. check for remaining accounts or optional accounts that are used without validation
+12. when an account is deserialized as an external type from another crate, consider that an attacker can create their own account with the same data layout. every field on that account is attacker-controlled unless program ownership is explicitly enforced. trace what happens if every field on such an account is set to arbitrary values.
 
 ## scope
 

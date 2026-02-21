@@ -11,12 +11,11 @@
 ### fork changes from [evmbench](https://github.com/paradigmxyz/evmbench)
 
 - **solana/anchor** instead of evm/solidity
-- **multi-model support** - run audits with multiple models simultaneously
-- **openrouter support** - use any openrouter-compatible model
+- **opencode** instead of openai codex - uses [opencode](https://opencode.ai) as the agent runtime
+- **multi-model support** - run audits with any openrouter-compatible model (claude, gpt, gemini, deepseek, etc.)
 - **effort levels** - low/medium/high runtime presets for cost control
-- **token usage optimization** - reduced prompt overhead and smarter context management
-
-this repository contains a companion interface to the `svmbench` detect evaluation ([code](https://github.com/openai/frontier-evals)).
+- **minimal worker image** - no solana/anchor cli installed; agent only reads source code
+- **no foundry/slither** - evm tooling removed since this is solana-focused
 
 upload anchor/solana program source code, select an agent, and receive a structured vulnerability report rendered in the ui.
 
@@ -44,19 +43,19 @@ frontend (next.js)
                                              ▼
                                       worker container
                                         ├─► secrets service (fetch bundle)
-                                        ├─► (optional) oai proxy (port 8084) ──► openai api
+                                        ├─► (optional) oai proxy (port 8084) ──► openrouter api
                                         └─► results service (port 8083)
 ```
 
 ### end-to-end flow
 
-1. user uploads a zip of program files via the frontend. the ui sends the archive, selected model key, and (optionally) an openai api key to `/v1/jobs/start`.
+1. user uploads a zip of program files via the frontend. the ui sends the archive, selected model key, and api key to `/v1/jobs/start`.
 2. the backend creates a job record in postgres, stores a secret bundle in the secrets service, and publishes a message to rabbitmq.
 3. the instancer consumes the job and starts a worker (docker locally; kubernetes backend is optional).
-4. the worker fetches its bundle from the secrets service, unpacks the uploaded zip to `audit/`, then runs codex in "detect-only" mode:
+4. the worker fetches its bundle from the secrets service, unpacks the uploaded zip to `audit/`, then runs opencode in "detect-only" mode:
    - prompt: `backend/worker_runner/detect.md` (copied to `$HOME/AGENTS.md` inside the container)
-   - model map: `backend/worker_runner/model_map.json` (maps ui model keys to codex model ids)
-   - command wrapper: `backend/worker_runner/run_codex_detect.sh`
+   - model map: `backend/worker_runner/model_map.json` (maps ui model keys to openrouter model ids)
+   - command wrapper: `backend/worker_runner/run_opencode.sh`
 5. the agent writes `submission/audit.md`. the worker validates that the output contains parseable json with `{"vulnerabilities": [...]}` and then uploads it to the results service.
 6. the frontend polls job status and renders the report with file navigation and annotations.
 
@@ -66,9 +65,9 @@ frontend (next.js)
 
 see `SECURITY.md` for the full trust model and operational guidance.
 
-openai credential handling:
+api credential handling:
 
-- **direct byok (default)**: worker receives a plaintext openai key (`OPENAI_API_KEY` / `CODEX_API_KEY`).
+- **direct byok (default)**: worker receives a plaintext openrouter key (`OPENROUTER_API_KEY`).
 - **proxy-token mode (optional)**: worker receives an opaque token and routes requests through `oai_proxy` (plaintext key stays outside the worker).
 
 enabling proxy-token mode:
@@ -80,7 +79,7 @@ cp .env.example .env
 docker compose --profile proxy up -d --build
 ```
 
-operational note: worker runtime is bounded by default; override the max audit runtime with `SVM_BENCH_CODEX_TIMEOUT_SECONDS` (default: 10800 seconds).
+operational note: worker runtime is bounded by default; override the max audit runtime with `AUDIT_TIMEOUT` (default: 900 seconds).
 
 ## key services
 
@@ -110,9 +109,9 @@ operational note: worker runtime is bounded by default; override the max audit r
 │   ├── resultsvc/            results ingestion + persistence
 │   ├── oai_proxy/            optional openai proxy (proxy-token mode)
 │   ├── prunner/              optional cleanup of stale workers
-│   ├── worker_runner/        detect prompt + model map + codex runner script
+│   ├── worker_runner/        detect prompts (effort levels) + model map + opencode runner
 │   ├── docker/
-│   │   ├── base/             base image: codex, rust, anchor cli, solana tools, node
+│   │   ├── base/             base image: opencode, node, ripgrep
 │   │   ├── backend/          backend services image
 │   │   └── worker/           worker image + entrypoint
 │   └── compose.yml           full stack (db/mq + services)

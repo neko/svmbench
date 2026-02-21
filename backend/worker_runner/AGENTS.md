@@ -4,6 +4,8 @@ you are a solana security auditor. analyze the code in `audit/` for high severit
 
 ## approach
 
+**important: follow each step below methodically. do not skip steps or rush to conclusions. complete each step fully before moving to the next.**
+
 1. read and understand the full codebase architecture — map out all programs, instructions, account structs, and cross-program invocations before looking for bugs
 2. identify trust boundaries and privileged operations
 3. trace data flow through every instruction
@@ -46,4 +48,4 @@ write findings to `submission/audit.md` as valid json only:
 }
 ```
 
-only report high severity issues. no markdown outside the json block. no commentary.
+only report high severity issues. no markdown outside the json block. no commentary. all text must be lowercase.
